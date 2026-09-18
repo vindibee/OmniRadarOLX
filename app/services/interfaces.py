@@ -14,6 +14,7 @@ from types import TracebackType
 from typing import Protocol, Self
 
 from app.domain.entities import (
+    BlockedSeller,
     Filter,
     FoundListing,
     Listing,
@@ -113,12 +114,42 @@ class DeliveryRepository(Protocol):
         ...
 
 
+class FavoriteRepository(Protocol):
+    """Избранное: объявления, сохранённые кнопкой под уведомлением."""
+
+    async def add(self, user_id: int, listing_id: int) -> bool: ...
+
+    async def remove(self, user_id: int, listing_id: int) -> None: ...
+
+    async def list_for_user(self, user_id: int, *, limit: int = 50) -> Sequence[Listing]: ...
+
+
+class BlockedSellerRepository(Protocol):
+    """Персональный бан-лист продавцов."""
+
+    async def block(
+        self, user_id: int, marketplace: str, seller_id: str, seller_name: str | None = None
+    ) -> bool: ...
+
+    async def unblock(self, user_id: int, marketplace: str, seller_id: str) -> None: ...
+
+    async def is_blocked(self, user_id: int, marketplace: str, seller_id: str) -> bool: ...
+
+    async def list_for_user(self, user_id: int) -> Sequence[BlockedSeller]: ...
+
+    async def blocked_ids(self, user_id: int, marketplace: str) -> frozenset[str]: ...
+
+
 class StatsRepository(Protocol):
     """Сводные запросы для админки владельца."""
 
     async def overview(self, now: datetime) -> Overview: ...
 
     async def users(self, now: datetime, *, limit: int = 100) -> Sequence[UserSummary]: ...
+
+    async def found_today(self, user_id: int, since: datetime) -> int:
+        """Сколько объявлений нашли фильтры пользователя с начала суток."""
+        ...
 
 
 class UnitOfWork(Protocol):
@@ -138,6 +169,12 @@ class UnitOfWork(Protocol):
 
     @property
     def deliveries(self) -> DeliveryRepository: ...
+
+    @property
+    def favorites(self) -> FavoriteRepository: ...
+
+    @property
+    def blocked_sellers(self) -> BlockedSellerRepository: ...
 
     @property
     def stats(self) -> StatsRepository: ...

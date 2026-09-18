@@ -22,6 +22,7 @@ from app.payments.stars import StarsPayments
 from app.repositories import SqlAlchemyUnitOfWork
 from app.services.admin import AdminService
 from app.services.billing import BillingOptions, BillingService
+from app.services.collections import CollectionService
 from app.services.filters import FilterService
 from app.services.interfaces import Cache, UnitOfWork, UnitOfWorkFactory
 from app.services.parsers import MarketplaceParser, ParserRegistry
@@ -30,6 +31,7 @@ from app.services.parsers.catalog import load_catalog
 from app.services.parsers.http_client import HttpClient, HttpClientOptions
 from app.services.parsers.olx_ua import DEFAULT_HEADERS as OLX_HEADERS
 from app.services.parsers.olx_ua import OlxUaParser
+from app.services.status import StatusService
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +127,20 @@ def build_billing_service(settings: Settings, uow_factory: UnitOfWorkFactory) ->
 
 def build_admin_service(uow_factory: UnitOfWorkFactory, billing: BillingService) -> AdminService:
     return AdminService(uow_factory, billing)
+
+
+def build_collection_service(uow_factory: UnitOfWorkFactory) -> CollectionService:
+    return CollectionService(uow_factory)
+
+
+def build_status_service(
+    settings: Settings, uow_factory: UnitOfWorkFactory, cache: Cache | None
+) -> StatusService:
+    return StatusService(
+        uow_factory,
+        interval_seconds=settings.monitoring.interval_seconds,
+        cache=cache,
+    )
 
 
 def build_bot(settings: Settings) -> Bot:

@@ -118,6 +118,16 @@ class ListingModel(Base):
     currency: Mapped[str | None] = mapped_column(String(8))
     location: Mapped[str | None] = mapped_column(String(256))
     image_url: Mapped[str | None] = mapped_column(Text)
+    # Все фото объявления — для медиагруппы в уведомлении.
+    images: Mapped[list[str]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    # Описание нужно для минус-слов; хранится усечённым.
+    description: Mapped[str | None] = mapped_column(Text)
+    seller_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    seller_name: Mapped[str | None] = mapped_column(String(128))
+    is_business: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    has_delivery: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    # Прошлая цена: заполняется при сохранении, если цена изменилась.
+    previous_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     first_seen_at: Mapped[datetime] = mapped_column(
@@ -126,6 +136,34 @@ class ListingModel(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class FavoriteModel(Base):
+    """Объявление, сохранённое пользователем кнопкой «В избранное» под уведомлением."""
+
+    __tablename__ = "favorites"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    listing_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BlockedSellerModel(Base):
+    """Персональный бан-лист: объявления этих продавцов пользователю не приходят."""
+
+    __tablename__ = "blocked_sellers"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    marketplace: Mapped[str] = mapped_column(String(32), primary_key=True)
+    seller_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    seller_name: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class DeliveryModel(Base):

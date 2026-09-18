@@ -85,5 +85,14 @@ class SqlAlchemyStatsRepository:
             for model, filters, until in rows.tuples()
         ]
 
+    async def found_today(self, user_id: int, since: datetime) -> int:
+        """Находки активных фильтров пользователя с начала суток."""
+        return await self._count(
+            select(func.count())
+            .select_from(DeliveryModel)
+            .join(FilterModel, FilterModel.id == DeliveryModel.filter_id)
+            .where(FilterModel.user_id == user_id, DeliveryModel.created_at >= since)
+        )
+
     async def _count(self, statement: Select[tuple[int]]) -> int:
         return await self._session.scalar(statement) or 0

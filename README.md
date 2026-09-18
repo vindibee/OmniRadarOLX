@@ -207,13 +207,55 @@ slugs are needed.
 OLX search is loose: ask for "iphone" and cases arrive too. So the form has two fields that work
 on our side, against the listing title:
 
-- **excluded words** — "чохол, скло, ремонт": a listing containing any of them never reaches you;
+- **minus words** — "чохол, скло, ремонт": a listing containing any of them never reaches you (the description is checked too);
 - **all query words** — the mode for an exact "аксесуари для iphone": every word must appear in
   the title, otherwise the listing is dropped.
 
 Filtering happens in `MonitoringService` right after the search and before storing, so the noise
 never enters the history or the notifications. Both settings live in the preset's `criteria JSONB`
 and are shown in the filter list as plain text.
+
+### The chat notification
+
+The listing card is the only thing the bot sends on its own. Under it sit three actions:
+"🔗 Open on OLX", "⭐ Save" and "🚫 Hide seller" (plus the app entry point). A tap is stored in the
+database (`favorites`, `blocked_sellers`), answered with a toast, and the button itself changes so
+the result is visible.
+
+**Gallery.** When a listing has several photos, the first five go out as one media group and the
+card with the buttons follows as a separate message: Telegram does not accept a keyboard on a
+media group.
+
+**Price dynamics.** The previous price is remembered only when it actually changed
+(`previous_price` in `listings`). A listing that got cheaper arrives with the old price struck
+through: ~~12 000 грн~~ ➔ **10 500 грн** (−12%).
+
+**A hidden seller** disappears before storage: `MonitoringService` drops their listings, so they
+reach neither the history nor the notifications. The seller can be restored from the Mini App —
+that button is easy to hit by accident.
+
+### Filter precision
+
+Beyond the query and the price, a filter can demand:
+
+- **minus words** — checked against the title **and the description**;
+- **all query words** — the mode for an exact "аксесуари для iphone";
+- **private sellers only** — no shops or business accounts;
+- **OLX Delivery only**;
+- **listings with photos only**;
+- **several locations at once** — up to five cities or regions. OLX accepts one location per
+  request, so a multi-choice becomes several passes and duplicates are merged by id.
+
+OLX has no server-side filters for seller type or delivery (its API answers 400), so those three
+flags are applied on our side from the listing data.
+
+### Transparency dashboard
+
+`GET /api/status` serves the widget: whether monitoring is alive, how many seconds ago the last
+pass ran, how long it took, how many filters it checked, and how many finds the user got today.
+After every successful pass the worker writes a heartbeat to Redis with a TTL of two intervals —
+if monitoring stalls, the mark expires on its own and the widget honestly goes dark. Without Redis
+the status reads as "no data", which breaks nothing.
 
 ### Owner's admin panel
 

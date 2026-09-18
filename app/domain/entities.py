@@ -4,9 +4,26 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from app.domain.tariffs import Tariff
+
+
+@dataclass(frozen=True, slots=True)
+class Location:
+    """Город или область из справочника площадки — то, что пользователь выбрал в списке."""
+
+    kind: Literal["city", "region"]
+    id: int
+    name: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        return {"kind": self.kind, "id": self.id, "name": self.name}
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> Location:
+        kind: Literal["city", "region"] = "region" if str(data.get("kind")) == "region" else "city"
+        return cls(kind=kind, id=int(data["id"]), name=str(data.get("name") or ""))
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,28 +33,44 @@ class SearchCriteria:
     query: str
     price_min: Decimal | None = None
     price_max: Decimal | None = None
-    # Площадка ищет нестрого: по «iphone» приедут и чехлы. Эти два поля отсекают лишнее
-    # уже у нас, по заголовку объявления.
-    exclude_words: tuple[str, ...] = ()
+    # Площадка ищет нестрого: по «iphone» приедут и чехлы. Минус-слова и режим «все слова»
+    # отсекают лишнее уже у нас — по заголовку и описанию.
+    minus_words: tuple[str, ...] = ()
     match_all_words: bool = False
+    # Несколько городов или областей сразу: парсер обходит их по очереди.
+    locations: tuple[Location, ...] = ()
+    # Флаги, которых нет в поиске OLX: применяем сами по данным объявления.
+    only_private: bool = False
+    only_with_delivery: bool = False
+    only_with_photo: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     def matches(self, listing: Listing) -> bool:
         """Проходит ли объявление точные требования пользователя."""
-        title = listing.title.casefold()
-        if any(word.casefold() in title for word in self.exclude_words if word.strip()):
+        haystack = f"{listing.title} {listing.description or ''}".casefold()
+        if any(word.casefold() in haystack for word in self.minus_words if word.strip()):
             return False
         if self.match_all_words:
-            return all(word.casefold() in title for word in self.query.split() if word.strip())
-        return True
+            title = listing.title.casefold()
+            if not all(word.casefold() in title for word in self.query.split() if word.strip()):
+                return False
+        if self.only_private and listing.is_business:
+            return False
+        if self.only_with_delivery and not listing.has_delivery:
+            return False
+        return not (self.only_with_photo and not listing.images and not listing.image_url)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "query": self.query,
             "price_min": str(self.price_min) if self.price_min is not None else None,
             "price_max": str(self.price_max) if self.price_max is not None else None,
-            "exclude_words": list(self.exclude_words),
+            "minus_words": list(self.minus_words),
             "match_all_words": self.match_all_words,
+            "locations": [location.to_json() for location in self.locations],
+            "only_private": self.only_private,
+            "only_with_delivery": self.only_with_delivery,
+            "only_with_photo": self.only_with_photo,
             "extra": dict(self.extra),
         }
 
@@ -50,8 +83,13 @@ class SearchCriteria:
             query=str(data.get("query", "")),
             price_min=to_decimal(data.get("price_min")),
             price_max=to_decimal(data.get("price_max")),
-            exclude_words=tuple(data.get("exclude_words") or ()),
+            # exclude_words — имя поля в старых пресетах, читаем оба.
+            minus_words=tuple(data.get("minus_words") or data.get("exclude_words") or ()),
             match_all_words=bool(data.get("match_all_words")),
+            locations=tuple(Location.from_json(item) for item in data.get("locations") or ()),
+            only_private=bool(data.get("only_private")),
+            only_with_delivery=bool(data.get("only_with_delivery")),
+            only_with_photo=bool(data.get("only_with_photo")),
             extra=dict(data.get("extra") or {}),
         )
 
@@ -68,8 +106,28 @@ class Listing:
     currency: str | None = None
     location: str | None = None
     image_url: str | None = None
+    # Несколько фото — для медиагруппы в уведомлении.
+    images: tuple[str, ...] = ()
+    description: str | None = None
+    seller_id: str | None = None
+    seller_name: str | None = None
+    is_business: bool = False
+    has_delivery: bool = False
+    # Прошлая цена того же объявления: заполняется при сохранении, если цена изменилась.
+    previous_price: Decimal | None = None
     published_at: datetime | None = None
     attributes: Mapping[str, Any] = field(default_factory=dict)
+    # Идентификатор в нашей базе. У свежеразобранного объявления его ещё нет.
+    id: int | None = None
+
+    @property
+    def price_drop_percent(self) -> int | None:
+        """На сколько процентов подешевело. ``None`` — цена не менялась или выросла."""
+        if self.previous_price is None or self.price is None or self.previous_price <= 0:
+            return None
+        if self.price >= self.previous_price:
+            return None
+        return int((self.previous_price - self.price) / self.previous_price * 100)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +180,29 @@ class Access:
     trial_available: bool = True
     # Владелец сервиса: доступ бессрочный, лимиты не применяются.
     is_admin: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BlockedSeller:
+    """Продавец в персональном бан-листе пользователя."""
+
+    marketplace: str
+    seller_id: str
+    seller_name: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerStatus:
+    """Что показывает виджет прозрачности: жив ли мониторинг и когда был последний обход."""
+
+    is_running: bool
+    last_run_at: datetime | None
+    seconds_ago: int | None
+    interval_seconds: float
+    last_cycle_seconds: float | None
+    filters_checked: int
+    found_today: int
 
 
 @dataclass(frozen=True, slots=True)

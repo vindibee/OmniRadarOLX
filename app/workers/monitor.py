@@ -4,6 +4,7 @@ import time
 from contextlib import suppress
 
 from app.services.monitoring import MonitoringService
+from app.services.status import StatusService
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,12 @@ class MonitoringWorker:
         *,
         interval_seconds: float,
         max_backoff_seconds: float = 600.0,
+        status: StatusService | None = None,
     ) -> None:
         self._service = service
         self._interval = interval_seconds
         self._max_backoff = max_backoff_seconds
+        self._status = status
 
     async def run(self, stop_event: asyncio.Event) -> None:
         logger.info("Мониторинг запущен, интервал %.0f c", self._interval)
@@ -46,6 +49,12 @@ class MonitoringWorker:
                 consecutive_failures = 0
                 elapsed = time.monotonic() - started
                 delay = max(self._interval - elapsed, 0.0)
+                if self._status is not None:
+                    # Отметка живости для виджета в Mini App; её потеря цикл не ломает.
+                    with suppress(Exception):
+                        await self._status.heartbeat(
+                            cycle_seconds=round(elapsed, 2), filters=stats.filters
+                        )
                 logger.info(
                     "Цикл за %.1f c: фильтров %d, запросов %d (ошибок %d), новых %d, "
                     "отправлено %d (ошибок %d)",

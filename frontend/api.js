@@ -35,6 +35,12 @@ const api = {
   startTrial: () => api.request("/trial", { method: "POST" }),
 
   catalog: () => api.request("/catalog"),
+  status: () => api.request("/status"),
+  favorites: () => api.request("/favorites"),
+  removeFavorite: (id) => api.request(`/favorites/${id}`, { method: "DELETE" }),
+  blockedSellers: () => api.request("/blocked-sellers"),
+  unblockSeller: (marketplace, sellerId) =>
+    api.request(`/blocked-sellers/${marketplace}/${sellerId}`, { method: "DELETE" }),
   filters: () => api.request("/filters"),
   createFilter: (payload) => api.request("/filters", { method: "POST", body: payload }),
   toggleFilter: (id) => api.request(`/filters/${id}/toggle`, { method: "POST" }),

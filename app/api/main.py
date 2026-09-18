@@ -23,14 +23,17 @@ from app.api.deps import (
     AdminUser,
     AppSettings,
     Billing,
+    Collections,
     CryptoBot,
     CurrentUser,
     Filters,
     Stars,
+    Status,
 )
 from app.api.schemas import (
     AccessOut,
     AdminUserOut,
+    BlockedSellerOut,
     CatalogOut,
     FilterIn,
     FilterOut,
@@ -38,10 +41,12 @@ from app.api.schemas import (
     InvoiceOut,
     ItemOut,
     LanguageIn,
+    ListingOut,
     MarketplaceOut,
     MeOut,
     OfferOut,
     OverviewOut,
+    StatusOut,
     TariffIn,
 )
 from app.composition import (
@@ -49,11 +54,13 @@ from app.composition import (
     build_billing_service,
     build_bot,
     build_cache,
+    build_collection_service,
     build_cryptobot_payments,
     build_engine,
     build_filter_service,
     build_parser_registry,
     build_stars_payments,
+    build_status_service,
     build_uow_factory,
 )
 from app.config import Settings
@@ -171,6 +178,42 @@ async def filter_history(
     return [ItemOut.from_domain(item) for item in found]
 
 
+# ---------- Прозрачность, избранное и бан-лист ----------
+
+
+@router.get("/status")
+async def status_widget(user: CurrentUser, status: Status) -> StatusOut:
+    """Виджет: жив ли мониторинг, когда был последний обход и сколько нашли сегодня."""
+    return StatusOut.from_domain(await status.status(user.id))
+
+
+@router.get("/favorites")
+async def list_favorites(user: CurrentUser, collections: Collections) -> list[ListingOut]:
+    return [ListingOut.from_domain(item) for item in await collections.favorites(user.id)]
+
+
+@router.delete("/favorites/{listing_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_favorite(user: CurrentUser, collections: Collections, listing_id: int) -> None:
+    await collections.remove_favorite(user.id, listing_id)
+
+
+@router.get("/blocked-sellers")
+async def list_blocked_sellers(
+    user: CurrentUser, collections: Collections
+) -> list[BlockedSellerOut]:
+    return [
+        BlockedSellerOut.from_domain(item) for item in await collections.blocked_sellers(user.id)
+    ]
+
+
+@router.delete("/blocked-sellers/{marketplace}/{seller_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unblock_seller(
+    user: CurrentUser, collections: Collections, marketplace: str, seller_id: str
+) -> None:
+    """Вернуть продавца: кнопку «скрыть» легко нажать случайно."""
+    await collections.unblock_seller(user.id, marketplace, seller_id)
+
+
 # ---------- Оплата ----------
 
 
@@ -277,6 +320,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.filters = build_filter_service(app_settings, uow_factory, parsers)
         app.state.stars = build_stars_payments(bot)
         app.state.admin = build_admin_service(uow_factory, app.state.billing)
+        app.state.collections = build_collection_service(uow_factory)
+        app.state.status = build_status_service(app_settings, uow_factory, cache)
         app.state.cryptobot = build_cryptobot_payments(app_settings)
         logger.info("Web API запущен, площадки: %s", ", ".join(parsers.codes))
         try:

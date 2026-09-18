@@ -124,6 +124,14 @@ class MonitoringService:
     ) -> None:
         now = self._clock()
         async with self._uow_factory() as uow:
+            # Продавцы из персонального бан-листа не должны попадать даже в историю.
+            blocked = await uow.blocked_sellers.blocked_ids(
+                search_filter.user_id, search_filter.marketplace
+            )
+            if blocked:
+                listings = [
+                    item for item in listings if not (item.seller_id and item.seller_id in blocked)
+                ]
             ids = await uow.listings.upsert_many(listings)
             fresh: list[int] = []
             stale: list[int] = []

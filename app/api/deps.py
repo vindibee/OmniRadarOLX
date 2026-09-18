@@ -18,7 +18,9 @@ from app.payments.cryptobot import CryptoBotPayments
 from app.payments.stars import StarsPayments
 from app.services.admin import AdminService
 from app.services.billing import BillingService
+from app.services.collections import CollectionService
 from app.services.filters import FilterService
+from app.services.status import StatusService
 
 INIT_DATA_MAX_AGE = timedelta(hours=24)
 
@@ -56,6 +58,16 @@ def get_cryptobot(request: Request) -> CryptoBotPayments:
 def get_admin(request: Request) -> AdminService:
     admin: AdminService = request.app.state.admin
     return admin
+
+
+def get_collections(request: Request) -> CollectionService:
+    collections: CollectionService = request.app.state.collections
+    return collections
+
+
+def get_status(request: Request) -> StatusService:
+    status_service: StatusService = request.app.state.status
+    return status_service
 
 
 async def get_current_user(
@@ -102,5 +114,7 @@ Admin = Annotated[AdminService, Depends(get_admin)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 Billing = Annotated[BillingService, Depends(get_billing)]
 Filters = Annotated[FilterService, Depends(get_filters)]
+Collections = Annotated[CollectionService, Depends(get_collections)]
+Status = Annotated[StatusService, Depends(get_status)]
 Stars = Annotated[StarsPayments, Depends(get_stars)]
 CryptoBot = Annotated[CryptoBotPayments, Depends(get_cryptobot)]

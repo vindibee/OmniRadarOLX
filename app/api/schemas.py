@@ -9,7 +9,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.domain.entities import Access, Filter, FoundListing, Overview, SearchCriteria, UserSummary
+from app.domain.entities import (
+    Access,
+    BlockedSeller,
+    Filter,
+    FoundListing,
+    Listing,
+    Location,
+    Overview,
+    SearchCriteria,
+    UserSummary,
+    WorkerStatus,
+)
 from app.domain.tariffs import Tariff
 from app.services.billing import Offer
 
@@ -17,6 +28,21 @@ QUERY_MAX_LENGTH = 100
 NAME_MAX_LENGTH = 64
 
 Language = Literal["uk", "ru", "en"]
+
+
+class LocationIn(BaseModel):
+    """Выбранный в списке город или область — id приходит из справочника."""
+
+    kind: Literal["city", "region"] = "city"
+    id: int = Field(gt=0)
+    name: str = ""
+
+    def to_domain(self) -> Location:
+        return Location(kind=self.kind, id=self.id, name=self.name)
+
+    @classmethod
+    def from_domain(cls, location: Location) -> LocationIn:
+        return cls(kind=location.kind, id=location.id, name=location.name)
 
 
 class CriteriaIn(BaseModel):
@@ -30,27 +56,32 @@ class CriteriaIn(BaseModel):
     price_min: Decimal | None = Field(default=None, ge=0)
     price_max: Decimal | None = Field(default=None, ge=0)
     condition: Literal["new", "used"] | None = None
-    region_id: int | None = Field(default=None, gt=0)
-    city_id: int | None = Field(default=None, gt=0)
     category_id: int | None = Field(default=None, gt=0)
-    # Минус-слова: «iphone» минус «чехол», чтобы не приходил мусор.
-    exclude_words: list[str] = Field(default_factory=list, max_length=20)
+    # Несколько городов или областей сразу.
+    locations: list[LocationIn] = Field(default_factory=list, max_length=5)
+    # Минус-слова: «iphone» минус «чехол» — проверяются по заголовку и описанию.
+    minus_words: list[str] = Field(default_factory=list, max_length=20)
     # Требовать все слова запроса в заголовке — точное «аксесуари для iphone».
     match_all_words: bool = False
+    only_private: bool = False
+    only_with_delivery: bool = False
+    only_with_photo: bool = False
 
     def to_domain(self) -> SearchCriteria:
         extra: dict[str, Any] = {
             "state": self.condition,
-            "region_id": self.region_id,
-            "city_id": self.city_id,
             "category_id": self.category_id,
         }
         return SearchCriteria(
             query=self.query,
             price_min=self.price_min,
             price_max=self.price_max,
-            exclude_words=tuple(word.strip() for word in self.exclude_words if word.strip()),
+            minus_words=tuple(word.strip() for word in self.minus_words if word.strip()),
             match_all_words=self.match_all_words,
+            locations=tuple(item.to_domain() for item in self.locations),
+            only_private=self.only_private,
+            only_with_delivery=self.only_with_delivery,
+            only_with_photo=self.only_with_photo,
             extra={key: value for key, value in extra.items() if value not in (None, "")},
         )
 
@@ -58,16 +89,23 @@ class CriteriaIn(BaseModel):
     def from_domain(cls, criteria: SearchCriteria) -> CriteriaIn:
         """Обратное преобразование — чтобы Mini App показал сохранённый фильтр той же формой."""
         extra = criteria.extra
+        locations = [LocationIn.from_domain(item) for item in criteria.locations]
+        # Пресеты, сохранённые до мульти-локаций, хранили город прямо в extra.
+        for kind, key in (("city", "city_id"), ("region", "region_id")):
+            if not locations and extra.get(key):
+                locations = [LocationIn(kind=kind, id=int(extra[key]))]
         return cls(
             query=criteria.query,
             price_min=criteria.price_min,
             price_max=criteria.price_max,
             condition=extra.get("state"),
-            region_id=extra.get("region_id"),
-            city_id=extra.get("city_id"),
             category_id=extra.get("category_id"),
-            exclude_words=list(criteria.exclude_words),
+            locations=locations,
+            minus_words=list(criteria.minus_words),
             match_all_words=criteria.match_all_words,
+            only_private=criteria.only_private,
+            only_with_delivery=criteria.only_with_delivery,
+            only_with_photo=criteria.only_with_photo,
         )
 
 
@@ -151,6 +189,72 @@ class ItemOut(BaseModel):
             found_at=found.found_at,
             sent_at=found.sent_at,
         )
+
+
+class ListingOut(BaseModel):
+    """Объявление для Mini App: избранное и история показываются одинаково."""
+
+    id: int | None
+    url: str
+    title: str
+    price: Decimal | None
+    previous_price: Decimal | None
+    currency: str | None
+    location: str | None
+    image_url: str | None
+    seller_name: str | None
+    is_business: bool
+    has_delivery: bool
+    published_at: datetime | None
+
+    @classmethod
+    def from_domain(cls, listing: Listing) -> ListingOut:
+        return cls(
+            id=listing.id,
+            url=listing.url,
+            title=listing.title,
+            price=listing.price,
+            previous_price=listing.previous_price,
+            currency=listing.currency,
+            location=listing.location,
+            image_url=listing.image_url,
+            seller_name=listing.seller_name,
+            is_business=listing.is_business,
+            has_delivery=listing.has_delivery,
+            published_at=listing.published_at,
+        )
+
+
+class BlockedSellerOut(BaseModel):
+    marketplace: str
+    seller_id: str
+    seller_name: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_domain(cls, seller: BlockedSeller) -> BlockedSellerOut:
+        return cls(
+            marketplace=seller.marketplace,
+            seller_id=seller.seller_id,
+            seller_name=seller.seller_name,
+            created_at=seller.created_at,
+        )
+
+
+class StatusOut(BaseModel):
+    """Виджет прозрачности: жив ли мониторинг и сколько нашёл сегодня."""
+
+    is_running: bool
+    last_run_at: datetime | None
+    seconds_ago: int | None
+    interval_seconds: float
+    last_cycle_seconds: float | None
+    filters_checked: int
+    found_today: int
+
+    @classmethod
+    def from_domain(cls, status: WorkerStatus) -> StatusOut:
+        return cls(**asdict(status))
 
 
 class AccessOut(BaseModel):

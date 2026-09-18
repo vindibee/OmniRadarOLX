@@ -72,6 +72,6 @@ def test_long_tariffs_are_cheaper_per_day(billing: BillingService) -> None:
     year = billing.offer(Tariff.YEAR)
 
     assert (day.discount_percent, month.discount_percent, year.discount_percent) == (0, 10, 30)
-    assert month.price_stars == 675, "30 дней по 25 звёзд минус 10%"
-    assert year.price_usd == Decimal("127.75"), "365 дней по $0.50 минус 30%"
+    assert month.price_stars == 1350, "30 дней по 50 звёзд минус 10%"
+    assert year.price_usd == Decimal("255.50"), "365 дней по $1.00 минус 30%"
     assert year.price_usd / year.days < day.price_usd

@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,12 @@ def _to_row(listing: Listing) -> dict[str, object]:
         "currency": listing.currency,
         "location": listing.location,
         "image_url": listing.image_url,
+        "images": list(listing.images),
+        "description": listing.description,
+        "seller_id": listing.seller_id,
+        "seller_name": listing.seller_name,
+        "is_business": listing.is_business,
+        "has_delivery": listing.has_delivery,
         "published_at": listing.published_at,
         "attributes": dict(listing.attributes),
     }
@@ -25,6 +31,7 @@ def _to_row(listing: Listing) -> dict[str, object]:
 
 def to_entity(model: ListingModel) -> Listing:
     return Listing(
+        id=model.id,
         marketplace=model.marketplace,
         external_id=model.external_id,
         url=model.url,
@@ -33,6 +40,13 @@ def to_entity(model: ListingModel) -> Listing:
         currency=model.currency,
         location=model.location,
         image_url=model.image_url,
+        images=tuple(model.images or ()),
+        description=model.description,
+        seller_id=model.seller_id,
+        seller_name=model.seller_name,
+        is_business=model.is_business,
+        has_delivery=model.has_delivery,
+        previous_price=model.previous_price,
         published_at=model.published_at,
         attributes=model.attributes,
     )
@@ -59,6 +73,21 @@ class SqlAlchemyListingRepository:
                 "currency": insert_stmt.excluded.currency,
                 "location": insert_stmt.excluded.location,
                 "image_url": insert_stmt.excluded.image_url,
+                "images": insert_stmt.excluded.images,
+                "description": insert_stmt.excluded.description,
+                "seller_id": insert_stmt.excluded.seller_id,
+                "seller_name": insert_stmt.excluded.seller_name,
+                "is_business": insert_stmt.excluded.is_business,
+                "has_delivery": insert_stmt.excluded.has_delivery,
+                # Прошлую цену запоминаем только когда она реально изменилась —
+                # так уведомление может показать «было → стало».
+                "previous_price": case(
+                    (
+                        ListingModel.price.is_distinct_from(insert_stmt.excluded.price),
+                        ListingModel.price,
+                    ),
+                    else_=ListingModel.previous_price,
+                ),
                 "attributes": insert_stmt.excluded.attributes,
                 "last_seen_at": func.now(),
             },

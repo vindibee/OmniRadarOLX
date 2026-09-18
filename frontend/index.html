@@ -75,6 +75,7 @@
     <main id="screen-main" class="hidden pb-24">
       <!-- Подписка -->
       <section id="tab-subscription" class="px-5 py-6">
+        <div id="status-widget" class="mb-4 rounded-2xl bg-card p-4"></div>
         <div id="access-card" class="rounded-2xl bg-card p-4"></div>
         <h2 class="mt-7 text-lg font-semibold" data-i18n="subscription.tariffs"></h2>
         <div id="tariff-list" class="mt-3 space-y-3"></div>
@@ -96,9 +97,9 @@
           </label>
 
           <label class="block">
-            <span class="text-sm text-muted" data-i18n="search.exclude"></span>
+            <span class="text-sm text-muted" data-i18n="search.minusWords"></span>
             <input
-              name="exclude_words"
+              name="minus_words"
               class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
               placeholder="чохол, скло, ремонт"
             />
@@ -142,23 +143,25 @@
             </select>
           </label>
 
-          <div class="flex gap-3">
-            <label class="block flex-1">
-              <span class="text-sm text-muted" data-i18n="search.region"></span>
+          <div>
+            <span class="text-sm text-muted" data-i18n="search.locations"></span>
+            <div class="mt-1 flex gap-3">
               <select
-                name="region_id"
                 id="select-region"
-                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+                class="w-full flex-1 rounded-xl bg-card px-4 py-3 outline-none"
               ></select>
-            </label>
-            <label class="block flex-1">
-              <span class="text-sm text-muted" data-i18n="search.city"></span>
               <select
-                name="city_id"
                 id="select-city"
-                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+                class="w-full flex-1 rounded-xl bg-card px-4 py-3 outline-none"
               ></select>
-            </label>
+            </div>
+            <button
+              type="button"
+              id="add-location"
+              class="tap mt-2 w-full rounded-xl bg-card px-4 py-2.5 text-sm"
+              data-i18n="search.addLocation"
+            ></button>
+            <div id="location-chips" class="mt-2 flex flex-wrap gap-2"></div>
           </div>
 
           <div class="flex gap-3">
@@ -177,6 +180,21 @@
                 id="select-subcategory"
                 class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
               ></select>
+            </label>
+          </div>
+
+          <div class="space-y-2">
+            <label class="flex items-center gap-3 rounded-xl bg-card px-4 py-3">
+              <input name="only_private" type="checkbox" class="h-5 w-5" />
+              <span class="text-sm" data-i18n="search.onlyPrivate"></span>
+            </label>
+            <label class="flex items-center gap-3 rounded-xl bg-card px-4 py-3">
+              <input name="only_with_delivery" type="checkbox" class="h-5 w-5" />
+              <span class="text-sm" data-i18n="search.onlyDelivery"></span>
+            </label>
+            <label class="flex items-center gap-3 rounded-xl bg-card px-4 py-3">
+              <input name="only_with_photo" type="checkbox" class="h-5 w-5" />
+              <span class="text-sm" data-i18n="search.onlyPhoto"></span>
             </label>
           </div>
 
@@ -201,6 +219,12 @@
       <section id="tab-filters" class="hidden px-5 py-6">
         <h2 class="text-lg font-semibold" data-i18n="filters.title"></h2>
         <div id="filter-list" class="mt-4 space-y-3"></div>
+      </section>
+
+      <!-- Избранное -->
+      <section id="tab-favorites" class="hidden px-5 py-6">
+        <h2 class="text-lg font-semibold" data-i18n="favorites.title"></h2>
+        <div id="favorites-list" class="mt-4 space-y-3"></div>
       </section>
 
       <!-- История одного фильтра -->
@@ -234,6 +258,10 @@
         <button data-tab="filters" class="tap py-3">
           <div class="text-lg">📋</div>
           <span data-i18n="nav.filters"></span>
+        </button>
+        <button data-tab="favorites" class="tap py-3">
+          <div class="text-lg">⭐</div>
+          <span data-i18n="nav.favorites"></span>
         </button>
         <button data-tab="admin" class="tap hidden py-3">
           <div class="text-lg">🛠</div>

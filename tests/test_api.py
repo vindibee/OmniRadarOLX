@@ -168,9 +168,10 @@ async def test_filter_requires_subscription_and_works_after_trial(
         "criteria": {
             "query": "iphone 13",
             "price_max": "20000",
-            "city_id": 268,
             "condition": "used",
-            "exclude_words": ["чохол"],
+            "locations": [{"kind": "city", "id": 268, "name": "Київ"}],
+            "minus_words": ["чохол"],
+            "only_private": True,
         },
     }
 
@@ -183,8 +184,10 @@ async def test_filter_requires_subscription_and_works_after_trial(
     assert allowed.status_code == 201
     assert allowed.json()["title"] == "Айфоны до 20к", "имя из формы, а не автозаголовок"
     criteria = allowed.json()["criteria"]
-    assert (criteria["city_id"], criteria["condition"]) == (268, "used")
-    assert criteria["exclude_words"] == ["чохол"], "минус-слова сохраняются в пресете"
+    assert criteria["locations"] == [{"kind": "city", "id": 268, "name": "Київ"}]
+    assert criteria["condition"] == "used"
+    assert criteria["minus_words"] == ["чохол"], "минус-слова сохраняются в пресете"
+    assert criteria["only_private"] is True
 
 
 async def test_second_trial_is_refused(client: AsyncClient, headers: dict[str, str]) -> None:
@@ -279,7 +282,7 @@ async def test_stars_invoice_is_issued_for_the_chosen_tariff(
     assert response.json() == {"provider": "stars", "url": "https://t.me/invoice/month"}
     user_id, offer = api.state.stars.calls[0]
     assert user_id == 1
-    assert offer.price_stars == 675, "30 дней по 25 звёзд минус 10%"
+    assert offer.price_stars == 1350, "30 дней по 50 звёзд минус 10%"
 
 
 async def test_crypto_payment_is_absent_until_configured(

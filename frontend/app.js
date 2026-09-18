@@ -6,10 +6,17 @@
  */
 const tg = window.Telegram?.WebApp;
 
+// Столько же локаций принимает бэкенд (app/services/parsers/olx_ua.py).
+const MAX_LOCATIONS = 5;
+
 const state = {
   me: null,
   catalog: null,
+  status: null,
   filters: [],
+  favorites: [],
+  // Локации, выбранные в форме поиска: их можно добавить несколько.
+  pickedLocations: [],
   tab: "subscription",
   openFilter: null,
 };
@@ -25,7 +32,7 @@ function showScreen(name) {
 
 function showTab(tab) {
   state.tab = tab;
-  ["subscription", "search", "filters", "history", "admin"].forEach((name) => {
+  ["subscription", "search", "filters", "favorites", "history", "admin"].forEach((name) => {
     $(`#tab-${name}`).classList.toggle("hidden", name !== tab);
   });
   document.querySelectorAll("nav [data-tab]").forEach((button) => {
@@ -112,6 +119,40 @@ function renderOnboarding() {
   };
   $("#skip-onboarding").onclick = () => openMain();
   i18n.apply();
+}
+
+// ---------- Прозрачность ----------
+
+function humanAgo(seconds) {
+  if (seconds === null || seconds === undefined) return null;
+  return seconds < 90
+    ? i18n.t("time.seconds", { value: seconds })
+    : i18n.t("time.minutes", { value: Math.round(seconds / 60) });
+}
+
+function renderStatus() {
+  const widget = $("#status-widget");
+  const status = state.status;
+  if (!status) {
+    widget.classList.add("hidden");
+    return;
+  }
+  widget.classList.remove("hidden");
+  const ago = humanAgo(status.seconds_ago);
+  const line = ago ? i18n.t("status.lastRun", { ago }) : i18n.t("status.never");
+  widget.innerHTML = `
+    <div class="font-semibold">${status.is_running ? i18n.t("status.active") : i18n.t("status.idle")}</div>
+    <div class="mt-1 text-sm text-muted">${line}</div>
+    <div class="text-sm text-muted">${i18n.t("status.foundToday", { count: status.found_today })}</div>`;
+}
+
+async function refreshStatus() {
+  try {
+    state.status = await api.status();
+  } catch (error) {
+    state.status = null; // статус — украшение, из-за него экран падать не должен
+  }
+  renderStatus();
 }
 
 // ---------- Подписка ----------
@@ -262,10 +303,46 @@ function renderCatalogSelects() {
     const region = regions.find((item) => String(item.id) === regionSelect.value);
     fillSelect(citySelect, region?.children || [], "search.anyCity");
   };
+  $("#add-location").onclick = () => addPickedLocation(regions, regionSelect, citySelect);
+  renderLocationChips();
   categorySelect.onchange = () => {
     const category = categories.find((item) => String(item.id) === categorySelect.value);
     fillSelect(subcategorySelect, category?.children || [], "search.anySubcategory");
   };
+}
+
+/** Добавляет выбранную пару «область/город» в список локаций фильтра. */
+function addPickedLocation(regions, regionSelect, citySelect) {
+  const region = regions.find((item) => String(item.id) === regionSelect.value);
+  if (!region) return;
+  const city = (region.children || []).find((item) => String(item.id) === citySelect.value);
+  const picked = city
+    ? { kind: "city", id: city.id, name: city.names[i18n.lang] || city.names.uk }
+    : { kind: "region", id: region.id, name: region.names[i18n.lang] || region.names.uk };
+
+  if (state.pickedLocations.some((item) => item.kind === picked.kind && item.id === picked.id)) {
+    return;
+  }
+  if (state.pickedLocations.length >= MAX_LOCATIONS) return;
+  state.pickedLocations.push(picked);
+  haptic();
+  renderLocationChips();
+}
+
+function renderLocationChips() {
+  const box = $("#location-chips");
+  box.innerHTML = "";
+  state.pickedLocations.forEach((location, index) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "tap rounded-full bg-card px-3 py-1.5 text-sm";
+    chip.textContent = `${location.name} ✕`;
+    chip.onclick = () => {
+      state.pickedLocations.splice(index, 1);
+      renderLocationChips();
+    };
+    box.append(chip);
+  });
 }
 
 function bindSearchForm() {
@@ -287,21 +364,25 @@ function bindSearchForm() {
         price_min: form.get("price_min") || null,
         price_max: form.get("price_max") || null,
         condition: form.get("condition") || null,
-        region_id: number("city_id") ? null : number("region_id"),
-        city_id: number("city_id"),
         category_id: categoryId,
-        exclude_words: (form.get("exclude_words") || "")
+        locations: state.pickedLocations,
+        minus_words: (form.get("minus_words") || "")
           .toString()
           .split(",")
           .map((word) => word.trim())
           .filter(Boolean),
         match_all_words: form.get("match_all_words") === "on",
+        only_private: form.get("only_private") === "on",
+        only_with_delivery: form.get("only_with_delivery") === "on",
+        only_with_photo: form.get("only_with_photo") === "on",
       },
     };
 
     try {
       await api.createFilter(payload);
       event.target.reset();
+      state.pickedLocations = [];
+      renderLocationChips();
       toast(i18n.t("toast.saved"));
       haptic("medium");
       await loadFilters();
@@ -360,12 +441,16 @@ function describeCriteria(criteria) {
   if (criteria.price_min || criteria.price_max) {
     parts.push(`${criteria.price_min || "…"} – ${criteria.price_max || "…"}`);
   }
-  if (criteria.condition) parts.push(i18n.t(`search.state${criteria.condition === "new" ? "New" : "Used"}`));
-  const city = findCatalogName(state.catalog?.regions, criteria.city_id);
-  const region = findCatalogName(state.catalog?.regions, criteria.region_id);
+  if (criteria.condition) {
+    parts.push(i18n.t(`search.state${criteria.condition === "new" ? "New" : "Used"}`));
+  }
+  (criteria.locations || []).forEach((location) => parts.push(location.name || location.id));
   const category = findCatalogName(state.catalog?.categories, criteria.category_id);
-  [city || region, category].forEach((name) => name && parts.push(name));
-  if (criteria.exclude_words?.length) parts.push(`− ${criteria.exclude_words.join(", ")}`);
+  if (category) parts.push(category);
+  if (criteria.only_private) parts.push(i18n.t("search.onlyPrivate"));
+  if (criteria.only_with_delivery) parts.push(i18n.t("search.onlyDelivery"));
+  if (criteria.only_with_photo) parts.push(i18n.t("search.onlyPhoto"));
+  if (criteria.minus_words?.length) parts.push(`− ${criteria.minus_words.join(", ")}`);
   return parts.join(" · ");
 }
 
@@ -493,6 +578,53 @@ async function renderAdmin() {
   });
 }
 
+// ---------- Избранное ----------
+
+function listingCard(item, action) {
+  const card = document.createElement("div");
+  card.className = "rounded-2xl bg-card p-3";
+  const price = formatPrice(item);
+  const was =
+    item.previous_price && item.price && Number(item.previous_price) > Number(item.price)
+      ? `<s class="text-muted">${Number(item.previous_price).toLocaleString(i18n.lang)}</s> `
+      : "";
+  card.innerHTML = `
+    <a href="${item.url}" target="_blank" rel="noopener" class="flex gap-3">
+      ${
+        item.image_url
+          ? `<img src="${item.image_url}" alt="" class="h-16 w-16 shrink-0 rounded-xl object-cover" />`
+          : ""
+      }
+      <div class="min-w-0">
+        <div class="truncate font-medium">${item.title}</div>
+        <div class="text-sm">${was}${price}</div>
+        <div class="mt-1 text-xs text-muted">
+          ${item.location || ""} ${item.published_at ? "· " + formatDateTime(item.published_at) : ""}
+        </div>
+      </div>
+    </a>`;
+  if (action) card.append(action);
+  return card;
+}
+
+async function renderFavorites() {
+  const list = $("#favorites-list");
+  state.favorites = await api.favorites();
+  list.innerHTML = "";
+  if (state.favorites.length === 0) {
+    list.innerHTML = `<p class="text-muted">${i18n.t("favorites.empty")}</p>`;
+    return;
+  }
+  state.favorites.forEach((item) => {
+    const remove = smallButton(i18n.t("favorites.remove"), async () => {
+      await api.removeFavorite(item.id);
+      await renderFavorites();
+    });
+    remove.classList.add("mt-2");
+    list.append(listingCard(item, remove));
+  });
+}
+
 // ---------- Запуск ----------
 
 async function refreshMe() {
@@ -514,12 +646,12 @@ async function openMain() {
   const isAdmin = state.me.access.is_admin;
   // Вкладка админки существует только у владельца: у остальных её нет в разметке.
   document.querySelector('[data-tab="admin"]').classList.toggle("hidden", !isAdmin);
-  $("#tabbar").classList.toggle("grid-cols-3", !isAdmin);
-  $("#tabbar").classList.toggle("grid-cols-4", isAdmin);
+  $("#tabbar").classList.toggle("grid-cols-4", !isAdmin);
+  $("#tabbar").classList.toggle("grid-cols-5", isAdmin);
 
   renderAccess();
   renderTariffs();
-  await loadFilters();
+  await Promise.all([loadFilters(), refreshStatus(), renderFavorites()]);
   if (isAdmin) await renderAdmin();
   showTab(state.tab);
   showScreen("main");
@@ -538,9 +670,12 @@ async function start() {
   }
 
   document.querySelectorAll("nav [data-tab]").forEach((button) => {
-    button.onclick = () => {
+    button.onclick = async () => {
       haptic();
       showTab(button.dataset.tab);
+      // Статус и избранное живут своей жизнью — обновляем при открытии вкладки.
+      if (button.dataset.tab === "subscription") await refreshStatus();
+      if (button.dataset.tab === "favorites") await renderFavorites();
     };
   });
   $("#history-back").onclick = () => showTab("filters");

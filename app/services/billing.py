@@ -31,8 +31,8 @@ ADMIN_PROVIDER = "admin"
 class BillingOptions:
     """Прайс задаётся ценой одного дня; скидки длинных тарифов живут в домене."""
 
-    day_price_stars: int = 25
-    day_price_usd: Decimal = Decimal("0.50")
+    day_price_stars: int = 50
+    day_price_usd: Decimal = Decimal("1.00")
 
 
 @dataclass(frozen=True, slots=True)

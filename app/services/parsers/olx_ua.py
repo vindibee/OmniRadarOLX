@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from html import unescape
 from typing import Any
 
-from app.domain.entities import Listing, SearchCriteria
+from app.domain.entities import Listing, Location, SearchCriteria
 from app.domain.errors import InvalidCriteriaError
 from app.services.parsers.base import MarketplaceParser
 from app.services.parsers.catalog import Catalog, load_catalog
@@ -36,6 +38,10 @@ ALLOWED_EXTRA_PARAMS = frozenset(
 STATE_PARAM = "filter_enum_state[0]"
 ALLOWED_STATES = frozenset({"new", "used"})
 IMAGE_SIZE = "800x600"
+# Описание нужно только для минус-слов — целиком его хранить незачем.
+DESCRIPTION_LIMIT = 2000
+# Каждая локация — отдельный обход выдачи, поэтому их число ограничено.
+MAX_LOCATIONS = 5
 
 
 class OlxUaParser(MarketplaceParser):
@@ -63,15 +69,28 @@ class OlxUaParser(MarketplaceParser):
     async def search(
         self, criteria: SearchCriteria, *, since: datetime | None = None
     ) -> Sequence[Listing]:
-        """Читает выдачу постранично, пока не дойдёт до объявлений старше ``since``.
+        """Обходит выдачу по каждой выбранной локации и склеивает результат.
 
-        По популярным запросам за один интервал может появиться больше объявлений, чем помещается
-        на странице, поэтому одной страницы мало. Ограничители: ``since`` и ``max_pages``.
+        OLX принимает только один город или область за запрос, поэтому мульти-локация —
+        это несколько обходов. Дубли (одно объявление в двух выборках) убираются по id.
         """
+        locations = criteria.locations or (None,)
+        listings: list[Listing] = []
+        seen: set[str] = set()
+        for location in locations[:MAX_LOCATIONS]:
+            for item in await self._search_one(criteria, location, since=since):
+                if item.external_id not in seen:
+                    seen.add(item.external_id)
+                    listings.append(item)
+        return listings
+
+    async def _search_one(
+        self, criteria: SearchCriteria, location: Location | None, *, since: datetime | None
+    ) -> Sequence[Listing]:
         listings: list[Listing] = []
         seen: set[str] = set()
         for page in range(self._max_pages):
-            params = self.build_params(criteria, offset=page * self._page_size)
+            params = self.build_params(criteria, offset=page * self._page_size, location=location)
             payload = await self._http.get_json(API_URL, params=params)
             batch = parse_offers(payload, marketplace=self.code)
             listings.extend(item for item in batch if item.external_id not in seen)
@@ -91,7 +110,9 @@ class OlxUaParser(MarketplaceParser):
             )
         return listings
 
-    def build_params(self, criteria: SearchCriteria, *, offset: int = 0) -> dict[str, Any]:
+    def build_params(
+        self, criteria: SearchCriteria, *, offset: int = 0, location: Location | None = None
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "offset": offset,
             "limit": self._page_size,
@@ -108,10 +129,24 @@ class OlxUaParser(MarketplaceParser):
                 params[STATE_PARAM] = value
             elif key in ALLOWED_EXTRA_PARAMS:
                 params[key] = value
+        if location is not None:
+            # Точная локация этого обхода перекрывает то, что осталось в extra.
+            params.pop("city_id", None)
+            params.pop("region_id", None)
+            params["city_id" if location.kind == "city" else "region_id"] = location.id
         return params
 
     def validate_criteria(self, criteria: SearchCriteria) -> None:
         super().validate_criteria(criteria)
+        if len(criteria.locations) > MAX_LOCATIONS:
+            raise InvalidCriteriaError(f"Не больше {MAX_LOCATIONS} локаций в одном фильтре")
+        for location in criteria.locations:
+            allowed = (
+                self._catalog.city_ids if location.kind == "city" else self._catalog.region_ids
+            )
+            if allowed and location.id not in allowed:
+                label = location.name or location.id
+                raise InvalidCriteriaError(f"«{label}» нет в справочнике OLX")
         unknown = set(criteria.extra) - ALLOWED_EXTRA_PARAMS
         if unknown:
             raise InvalidCriteriaError(f"Неизвестные параметры OLX: {', '.join(sorted(unknown))}")
@@ -167,6 +202,10 @@ def _parse_offer(offer: Mapping[str, Any], marketplace: str) -> Listing:
     region = (location.get("region") or {}).get("name")
 
     promotion = offer.get("promotion") or {}
+    seller = offer.get("user") or {}
+    photos = offer.get("photos") or []
+    delivery = ((offer.get("delivery") or {}).get("rock") or {}).get("active")
+    safedeal = (offer.get("safedeal") or {}).get("status") == "active"
     return Listing(
         marketplace=marketplace,
         external_id=str(offer["id"]),
@@ -175,7 +214,14 @@ def _parse_offer(offer: Mapping[str, Any], marketplace: str) -> Listing:
         price=_to_decimal(price_value.get("value")),
         currency=price_value.get("currency"),
         location=", ".join(part for part in (city, region) if part) or None,
-        image_url=_first_photo(offer.get("photos") or []),
+        image_url=_first_photo(photos),
+        images=tuple(url for url in map(_photo_url, photos) if url),
+        description=_plain_text(offer.get("description")),
+        seller_id=str(seller["id"]) if seller.get("id") else None,
+        seller_name=str(seller.get("name") or "") or None,
+        is_business=bool(offer.get("business")),
+        # У OLX два признака доставки: старый rock и safedeal («OLX Доставка»).
+        has_delivery=bool(delivery or safedeal),
         published_at=_parse_datetime(offer.get("created_time")),
         attributes={
             "params": {
@@ -194,13 +240,24 @@ def _parse_offer(offer: Mapping[str, Any], marketplace: str) -> Listing:
 
 
 def _first_photo(photos: Sequence[Mapping[str, Any]]) -> str | None:
-    if not photos:
-        return None
-    link = photos[0].get("link")
+    return _photo_url(photos[0]) if photos else None
+
+
+def _photo_url(photo: Mapping[str, Any]) -> str | None:
+    link = photo.get("link")
     if not link:
         return None
     width, height = IMAGE_SIZE.split("x")
     return str(link).replace("{width}", width).replace("{height}", height)
+
+
+def _plain_text(value: Any) -> str | None:
+    """Описание приходит с HTML-разметкой: для поиска минус-слов нужен простой текст."""
+    if not value:
+        return None
+    text = re.sub(r"<[^>]+>", " ", str(value))
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip()[:DESCRIPTION_LIMIT] or None
 
 
 def _parse_datetime(value: Any) -> datetime | None:

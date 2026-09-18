@@ -3,6 +3,10 @@ from typing import Self
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.repositories.collections import (
+    SqlAlchemyBlockedSellerRepository,
+    SqlAlchemyFavoriteRepository,
+)
 from app.repositories.deliveries import SqlAlchemyDeliveryRepository
 from app.repositories.filters import SqlAlchemyFilterRepository
 from app.repositories.listings import SqlAlchemyListingRepository
@@ -23,6 +27,8 @@ class SqlAlchemyUnitOfWork:
     subscriptions: SqlAlchemySubscriptionRepository
     listings: SqlAlchemyListingRepository
     deliveries: SqlAlchemyDeliveryRepository
+    favorites: SqlAlchemyFavoriteRepository
+    blocked_sellers: SqlAlchemyBlockedSellerRepository
     stats: SqlAlchemyStatsRepository
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -36,6 +42,8 @@ class SqlAlchemyUnitOfWork:
         self.subscriptions = SqlAlchemySubscriptionRepository(self._session)
         self.listings = SqlAlchemyListingRepository(self._session)
         self.deliveries = SqlAlchemyDeliveryRepository(self._session)
+        self.favorites = SqlAlchemyFavoriteRepository(self._session)
+        self.blocked_sellers = SqlAlchemyBlockedSellerRepository(self._session)
         self.stats = SqlAlchemyStatsRepository(self._session)
         return self
 

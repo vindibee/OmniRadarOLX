@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.api.schemas import CriteriaIn
+from app.api.schemas import CriteriaIn, LocationIn
 from app.domain.entities import Listing, SearchCriteria
 from app.domain.errors import InvalidCriteriaError
 from app.services.parsers.catalog import load_catalog
@@ -73,11 +73,11 @@ def test_selected_values_become_olx_query_parameters() -> None:
         query="аксесуари для iphone",
         price_max=Decimal(500),
         condition="used",
-        city_id=268,
         category_id=1,
+        locations=[LocationIn(kind="city", id=268, name="Київ")],
     ).to_domain()
 
-    params = _parser().build_params(criteria)
+    params = _parser().build_params(criteria, location=criteria.locations[0])
 
     assert params["query"] == "аксесуари для iphone"
     assert params["city_id"] == 268
@@ -86,19 +86,38 @@ def test_selected_values_become_olx_query_parameters() -> None:
     assert params["filter_float_price:to"] == "500"
 
 
-def test_city_wins_over_region_in_the_form() -> None:
-    """В Mini App выбран город — область в запрос не идёт, иначе поиск шире, чем просили."""
-    criteria = CriteriaIn(query="iphone", region_id=25, city_id=268).to_domain()
+def test_every_location_becomes_its_own_request() -> None:
+    """OLX принимает одну локацию за запрос, поэтому мульти-выбор — это несколько обходов."""
+    criteria = CriteriaIn(
+        query="iphone",
+        locations=[
+            LocationIn(kind="city", id=268, name="Київ"),
+            LocationIn(kind="region", id=5, name="Львівська область"),
+        ],
+    ).to_domain()
+    parser = _parser()
 
-    assert criteria.extra["city_id"] == 268
-    assert criteria.extra["region_id"] == 25, "хранится оба, в запрос парсер берёт точный город"
+    city_params = parser.build_params(criteria, location=criteria.locations[0])
+    region_params = parser.build_params(criteria, location=criteria.locations[1])
+
+    assert city_params["city_id"] == 268 and "region_id" not in city_params
+    assert region_params["region_id"] == 5 and "city_id" not in region_params
+
+
+def test_locations_outside_the_catalog_are_rejected() -> None:
+    criteria = CriteriaIn(
+        query="iphone", locations=[LocationIn(kind="city", id=99999999, name="Нигде")]
+    ).to_domain()
+
+    with pytest.raises(InvalidCriteriaError, match="справочник"):
+        _parser().validate_criteria(criteria)
 
 
 # ---------- Точные ключевые слова ----------
 
 
-def test_excluded_words_cut_the_noise() -> None:
-    criteria = CriteriaIn(query="iphone 13", exclude_words=["чохол", "скло"]).to_domain()
+def test_minus_words_cut_the_noise() -> None:
+    criteria = CriteriaIn(query="iphone 13", minus_words=["чохол", "скло"]).to_domain()
 
     assert criteria.matches(listing("iPhone 13 128GB")) is True
     assert criteria.matches(listing("Чохол на iPhone 13")) is False
@@ -123,12 +142,26 @@ def test_criteria_survive_the_database_round_trip() -> None:
         query="iphone 13",
         price_min=Decimal(5000),
         condition="new",
-        city_id=268,
-        exclude_words=["чохол"],
+        locations=[LocationIn(kind="city", id=268, name="Київ")],
+        minus_words=["чохол"],
         match_all_words=True,
+        only_private=True,
+        only_with_delivery=True,
     ).to_domain()
 
     restored = SearchCriteria.from_json(criteria.to_json())
 
     assert restored == criteria
-    assert CriteriaIn.from_domain(restored).city_id == 268, "форма показывается той же"
+    form = CriteriaIn.from_domain(restored)
+    assert form.locations[0].id == 268, "форма показывается той же"
+    assert form.only_private and form.only_with_delivery
+
+
+def test_old_presets_still_open(  # минус-слова раньше назывались exclude_words
+) -> None:
+    restored = SearchCriteria.from_json(
+        {"query": "iphone", "exclude_words": ["чохол"], "extra": {"city_id": 268}}
+    )
+
+    assert restored.minus_words == ("чохол",)
+    assert CriteriaIn.from_domain(restored).locations[0].id == 268, "город переехал в locations"

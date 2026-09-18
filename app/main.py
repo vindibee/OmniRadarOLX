@@ -19,9 +19,11 @@ from app.composition import (
     build_billing_service,
     build_bot,
     build_cache,
+    build_collection_service,
     build_engine,
     build_filter_service,
     build_parser_registry,
+    build_status_service,
     build_uow_factory,
 )
 from app.config import BotSettings, Settings
@@ -50,6 +52,8 @@ async def run(settings: Settings) -> None:
 
     filter_service = build_filter_service(settings, uow_factory, parsers)
     billing_service = build_billing_service(settings, uow_factory)
+    collection_service = build_collection_service(uow_factory)
+    status_service = build_status_service(settings, uow_factory, cache)
     monitoring_service = MonitoringService(
         uow_factory,
         parsers,
@@ -62,7 +66,9 @@ async def run(settings: Settings) -> None:
         ),
     )
     worker = MonitoringWorker(
-        monitoring_service, interval_seconds=settings.monitoring.interval_seconds
+        monitoring_service,
+        interval_seconds=settings.monitoring.interval_seconds,
+        status=status_service,
     )
 
     # Dependency Injection aiogram: всё, что передано в Dispatcher, доступно хендлерам по имени.
@@ -71,6 +77,7 @@ async def run(settings: Settings) -> None:
         storage=create_storage(settings.bot, settings.redis.url),
         filter_service=filter_service,
         billing=billing_service,
+        collections=collection_service,
         bot_settings=settings.bot,
     )
     dispatcher.include_router(create_root_router())

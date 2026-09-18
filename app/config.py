@@ -75,8 +75,8 @@ class CacheSettings(BaseModel):
 class BillingSettings(BaseModel):
     """Прайс за один день; скидки длинных тарифов заданы в app/domain/tariffs.py."""
 
-    day_price_stars: int = Field(default=25, ge=1)
-    day_price_usd: Decimal = Field(default=Decimal("0.50"), gt=0)
+    day_price_stars: int = Field(default=50, ge=1)
+    day_price_usd: Decimal = Field(default=Decimal("1.00"), gt=0)
     # CryptoBot: без токена этот способ оплаты просто не предлагается.
     cryptobot_token: SecretStr | None = None
     cryptobot_network: Literal["mainnet", "testnet"] = "mainnet"
