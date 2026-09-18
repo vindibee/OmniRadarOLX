@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.handlers import keyboards
 from app.handlers.callbacks import MenuAction, MenuCallback
-from app.services.subscriptions import SubscriptionService
+from app.services.filters import FilterService
 
 router = Router(name="common")
 
@@ -39,12 +39,10 @@ async def show(callback: CallbackQuery, text: str, markup: InlineKeyboardMarkup)
 
 
 @router.message(CommandStart())
-async def cmd_start(
-    message: Message, state: FSMContext, subscription_service: SubscriptionService
-) -> None:
+async def cmd_start(message: Message, state: FSMContext, filter_service: FilterService) -> None:
     await state.clear()
     if message.from_user:
-        await subscription_service.register_user(
+        await filter_service.register_user(
             user_id=message.from_user.id,
             username=message.from_user.username,
             full_name=message.from_user.full_name,

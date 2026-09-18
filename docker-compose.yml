@@ -8,7 +8,7 @@ x-app: &app
     DB__PORT: 5432
     # В Docker диалоги создания фильтра переживают перезапуск бота.
     BOT__FSM_STORAGE: redis
-    BOT__REDIS_URL: redis://redis:6379/0
+    REDIS__URL: redis://redis:6379/0
   restart: unless-stopped
 
 services:
@@ -36,6 +36,9 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
+    ports:
+      # Только localhost — для локального запуска бота и API с хоста.
+      - "127.0.0.1:${REDIS__PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -53,6 +56,19 @@ services:
 
   bot:
     <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    # Web API для Mini App: те же сервисы и та же БД, отдельный процесс.
+    command: ["uvicorn", "app.api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      # Наружу отдаёт reverse-proxy с HTTPS — Telegram открывает Mini App только по https.
+      - "127.0.0.1:${API__PORT:-8080}:8080"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -31,11 +31,11 @@ class ConfirmCallback(CallbackData, prefix="confirm"):
     action: ConfirmAction
 
 
-class SubscriptionAction(StrEnum):
+class FilterAction(StrEnum):
     TOGGLE = "toggle"
     DELETE = "delete"
 
 
-class SubscriptionCallback(CallbackData, prefix="sub"):
-    action: SubscriptionAction
-    subscription_id: int
+class FilterCallback(CallbackData, prefix="sub"):
+    action: FilterAction
+    filter_id: int

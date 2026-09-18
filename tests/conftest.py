@@ -12,7 +12,7 @@ from app.config import DatabaseSettings
 from app.database import models  # noqa: F401
 from app.database.base import Base
 from app.database.session import create_engine, create_session_factory
-from app.domain.entities import Listing, SearchCriteria, Subscription
+from app.domain.entities import Filter, Listing, SearchCriteria
 from app.domain.errors import NotificationError
 from app.repositories import SqlAlchemyUnitOfWork
 from app.services.interfaces import UnitOfWork
@@ -91,9 +91,7 @@ class FakeNotifier:
         self.sent: list[tuple[int, str]] = []
         self.error: NotificationError | None = None
 
-    async def send_listing(
-        self, chat_id: int, subscription: Subscription, listing: Listing
-    ) -> None:
+    async def send_listing(self, chat_id: int, search_filter: Filter, listing: Listing) -> None:
         if self.error is not None:
             raise self.error
         self.sent.append((chat_id, listing.external_id))

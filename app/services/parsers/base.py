@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
-from typing import ClassVar
 
 from app.domain.entities import Listing, MarketplaceInfo, SearchCriteria
 from app.domain.errors import InvalidCriteriaError
@@ -14,8 +13,9 @@ class MarketplaceParser(ABC):
     возвращает нормализованные ``Listing`` и сообщает о сбоях через ``ParserError``.
     """
 
-    code: ClassVar[str]
-    title: ClassVar[str]
+    # Заполняются подклассом. Не ClassVar: обёртки вроде CachingParser проксируют их с экземпляра.
+    code: str
+    title: str
 
     @property
     def info(self) -> MarketplaceInfo:

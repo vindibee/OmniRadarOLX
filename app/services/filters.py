@@ -1,14 +1,14 @@
 from collections.abc import Sequence
 
-from app.domain.entities import MarketplaceInfo, SearchCriteria, Subscription, User
-from app.domain.errors import SubscriptionLimitExceededError, SubscriptionNotFoundError
+from app.domain.entities import Filter, MarketplaceInfo, SearchCriteria, User
+from app.domain.errors import FilterLimitExceededError, FilterNotFoundError
 from app.services.interfaces import UnitOfWork, UnitOfWorkFactory
 from app.services.parsers.registry import ParserRegistry
 
 TITLE_MAX_LENGTH = 128
 
 
-class SubscriptionService:
+class FilterService:
     """Сценарии пользователя: регистрация и управление фильтрами поиска."""
 
     def __init__(
@@ -16,11 +16,11 @@ class SubscriptionService:
         uow_factory: UnitOfWorkFactory,
         parsers: ParserRegistry,
         *,
-        max_subscriptions_per_user: int,
+        max_filters_per_user: int,
     ) -> None:
         self._uow_factory = uow_factory
         self._parsers = parsers
-        self._max_per_user = max_subscriptions_per_user
+        self._max_per_user = max_filters_per_user
 
     def marketplaces(self) -> Sequence[MarketplaceInfo]:
         return self._parsers.marketplaces()
@@ -30,50 +30,48 @@ class SubscriptionService:
             await uow.users.upsert(User(id=user_id, username=username, full_name=full_name))
             await uow.commit()
 
-    async def create(
-        self, user_id: int, marketplace: str, criteria: SearchCriteria
-    ) -> Subscription:
+    async def create(self, user_id: int, marketplace: str, criteria: SearchCriteria) -> Filter:
         parser = self._parsers.get(marketplace)  # UnknownMarketplaceError, если площадки нет
         parser.validate_criteria(criteria)  # InvalidCriteriaError
 
         async with self._uow_factory() as uow:
-            if await uow.subscriptions.count_for_user(user_id) >= self._max_per_user:
-                raise SubscriptionLimitExceededError(self._max_per_user)
-            subscription = await uow.subscriptions.add(
+            if await uow.filters.count_for_user(user_id) >= self._max_per_user:
+                raise FilterLimitExceededError(self._max_per_user)
+            search_filter = await uow.filters.add(
                 user_id=user_id,
                 marketplace=marketplace,
                 title=_make_title(criteria),
                 criteria=criteria,
             )
             await uow.commit()
-        return subscription
+        return search_filter
 
-    async def list(self, user_id: int) -> Sequence[Subscription]:
+    async def list(self, user_id: int) -> Sequence[Filter]:
         async with self._uow_factory() as uow:
-            return await uow.subscriptions.list_for_user(user_id)
+            return await uow.filters.list_for_user(user_id)
 
-    async def toggle(self, user_id: int, subscription_id: int) -> Subscription:
+    async def toggle(self, user_id: int, filter_id: int) -> Filter:
         async with self._uow_factory() as uow:
-            subscription = await self._get_owned(uow, user_id, subscription_id)
-            await uow.subscriptions.set_active(subscription_id, not subscription.is_active)
+            search_filter = await self._get_owned(uow, user_id, filter_id)
+            await uow.filters.set_active(filter_id, not search_filter.is_active)
             await uow.commit()
-            updated = await uow.subscriptions.get_for_user(subscription_id, user_id)
+            updated = await uow.filters.get_for_user(filter_id, user_id)
         if updated is None:
-            raise SubscriptionNotFoundError(subscription_id)
+            raise FilterNotFoundError(filter_id)
         return updated
 
-    async def delete(self, user_id: int, subscription_id: int) -> None:
+    async def delete(self, user_id: int, filter_id: int) -> None:
         async with self._uow_factory() as uow:
-            await self._get_owned(uow, user_id, subscription_id)
-            await uow.subscriptions.delete(subscription_id)
+            await self._get_owned(uow, user_id, filter_id)
+            await uow.filters.delete(filter_id)
             await uow.commit()
 
     @staticmethod
-    async def _get_owned(uow: UnitOfWork, user_id: int, subscription_id: int) -> Subscription:
-        subscription = await uow.subscriptions.get_for_user(subscription_id, user_id)
-        if subscription is None:
-            raise SubscriptionNotFoundError(subscription_id)
-        return subscription
+    async def _get_owned(uow: UnitOfWork, user_id: int, filter_id: int) -> Filter:
+        search_filter = await uow.filters.get_for_user(filter_id, user_id)
+        if search_filter is None:
+            raise FilterNotFoundError(filter_id)
+        return search_filter
 
 
 def _make_title(criteria: SearchCriteria) -> str:

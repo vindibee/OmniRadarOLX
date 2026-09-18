@@ -12,16 +12,38 @@ class InvalidCriteriaError(DomainError):
     pass
 
 
-class SubscriptionLimitExceededError(DomainError):
+class FilterLimitExceededError(DomainError):
     def __init__(self, limit: int) -> None:
         super().__init__(f"Достигнут лимит фильтров: {limit}")
         self.limit = limit
 
 
-class SubscriptionNotFoundError(DomainError):
-    def __init__(self, subscription_id: int) -> None:
+class FilterNotFoundError(DomainError):
+    def __init__(self, filter_id: int) -> None:
         super().__init__("Фильтр не найден")
-        self.subscription_id = subscription_id
+        self.filter_id = filter_id
+
+
+class TrialAlreadyUsedError(DomainError):
+    def __init__(self) -> None:
+        super().__init__("Демо-доступ уже использован")
+
+
+class SubscriptionRequiredError(DomainError):
+    def __init__(self) -> None:
+        super().__init__("Нужна активная подписка")
+
+
+class PresetLimitExceededError(DomainError):
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"Достигнут лимит пресетов: {limit}")
+        self.limit = limit
+
+
+class PresetNotFoundError(DomainError):
+    def __init__(self, preset_id: int) -> None:
+        super().__init__("Пресет не найден")
+        self.preset_id = preset_id
 
 
 class NotificationError(Exception):

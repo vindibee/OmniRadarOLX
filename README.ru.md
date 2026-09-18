@@ -5,15 +5,17 @@
 Telegram-бот для мониторинга объявлений. Сейчас поддерживает OLX.ua; архитектура рассчитана на добавление
 других площадок (например, Gumtree Australia) без изменения ядра.
 
-**Стек:** Python 3.12 · aiogram 3 · curl_cffi · PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic ·
-Redis (состояние диалогов) · pydantic-settings · Docker Compose.
+**Стек:** Python 3.12 · aiogram 3 (бот) · FastAPI (API для Mini App) · curl_cffi (парсер) ·
+PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic · Redis (FSM + кэш выдачи) ·
+pydantic-settings · Docker Compose.
 
 ## Быстрый старт (Docker)
 
 ```bash
 cp .env.example .env         # впишите BOT__TOKEN и пароль БД
-docker compose up -d --build # db + redis → migrate (alembic upgrade head) → bot
-docker compose logs -f bot
+docker compose up -d --build # db + redis → migrate (alembic upgrade head) → bot + api
+docker compose logs -f bot api
+curl http://127.0.0.1:8080/api/health
 ```
 
 В Telegram откройте бота и нажмите «Начать» → «➕ Новый фильтр». Дальше всё управление —
@@ -43,34 +45,47 @@ mypy app tests    # strict
 
 ```
 app/
-├── main.py                 # корень композиции: создаёт и связывает зависимости (DI), запускает бота и воркер
-├── config.py               # pydantic-settings: BOT__*, DB__*, HTTP__*, PARSER__*, MONITORING__*
-├── domain/                 # чистые dataclass-сущности и доменные ошибки, без фреймворков
-├── handlers/               # Presentation: aiogram-роутеры, FSM, клавиатуры. Только вызовы сервисов
-├── services/               # Бизнес-логика
-│   ├── interfaces.py       #   порты: UnitOfWork, репозитории, Notifier (Protocol)
-│   ├── subscriptions.py    #   сценарии пользователя: фильтры, лимиты, права
+├── main.py                 # точка входа бота: aiogram-диспетчер + фоновый воркер
+├── composition.py          # общая сборка зависимостей для бота и API (DI, без синглтонов)
+├── config.py               # pydantic-settings: BOT__*, DB__*, REDIS__*, CACHE__*, BILLING__*,
+│                           #   API__*, HTTP__*, PARSER__*, MONITORING__*
+├── domain/                 # чистые dataclass-сущности, тарифы и доменные ошибки, без фреймворков
+├── api/                    # Web API для Mini App (FastAPI) — только HTTP, логика в services/
+│   ├── security.py         #   проверка подписи Telegram initData (без FastAPI, тестируется сама)
+│   ├── deps.py             #   зависимости: текущий пользователь, сервисы из app.state
+│   ├── schemas.py          #   pydantic-контракт HTTP, отдельный от доменных сущностей
+│   └── main.py             #   create_app(): lifespan, CORS, роуты /api/*
+├── handlers/               # Presentation бота: aiogram-роутеры, FSM, клавиатуры
+├── services/               # Бизнес-логика, общая для бота и API
+│   ├── interfaces.py       #   порты: UnitOfWork, репозитории, Notifier, Cache (Protocol)
+│   ├── filters.py          #   фильтры поиска: лимиты, права
+│   ├── billing.py          #   подписки: триал, продление, проверка доступа
+│   ├── presets.py          #   пресеты Mini App и разворачивание их в фильтр
 │   ├── monitoring.py       #   цикл: поиск → сохранение → дедупликация → доставка
-│   └── parsers/            #   контракт MarketplaceParser, реестр, HTTP-клиент curl_cffi, OLX.ua
+│   └── parsers/            #   MarketplaceParser, реестр, curl_cffi, OLX.ua, кэш выдачи
 ├── repositories/           # Data Access: SQLAlchemy-реализации портов + Unit of Work
 ├── database/               # ORM-модели (JSONB), engine/session, миграции Alembic
-├── notifications/          # TelegramNotifier — реализация порта Notifier (клавиатуры берёт
-│                           #   из handlers/keyboards: это тот же телеграм-слой представления)
+├── cache/                  # RedisCache — реализация порта Cache
+├── notifications/          # TelegramNotifier — реализация порта Notifier
 └── workers/                # фоновый цикл мониторинга с graceful degradation
 ```
 
-Зависимости направлены внутрь: `handlers → services → domain`. `repositories` и `notifications` реализуют
-порты из `services/interfaces.py`, а связывает всё `main.py`. Глобальных синглтонов нет: сервисы
-передаются в хендлеры через DI aiogram (`Dispatcher(subscription_service=...)`).
+Зависимости направлены внутрь: `handlers → services → domain` и `api → services → domain`.
+`repositories`, `cache` и `notifications` реализуют порты из `services/interfaces.py`, а связывает
+всё `composition.py` — поэтому бот и API поднимают одни и те же сервисы поверх одной БД.
+Глобальных синглтонов нет: в хендлеры сервисы приходят через DI aiogram
+(`Dispatcher(filter_service=...)`), в эндпоинты — через `Depends` поверх `app.state`.
 
 ### Данные
 
 | Таблица | Назначение |
 |---|---|
-| `users` | пользователи Telegram (id = Telegram user id) |
-| `subscriptions` | фильтры; параметры поиска в `criteria JSONB` |
+| `users` | пользователи Telegram (id = Telegram user id), `language_code` — язык интерфейса |
+| `filters` | фильтры мониторинга; параметры поиска в `criteria JSONB` |
+| `subscriptions` | оплаченные периоды доступа: тариф, срок, платёж |
+| `search_presets` | сохранённые формы поиска из Mini App, `UNIQUE (user_id, name)` |
 | `listings` | объявления, `UNIQUE (marketplace, external_id)`; характеристики в `attributes JSONB` + GIN-индекс |
-| `deliveries` | связь «фильтр — объявление», `PRIMARY KEY (subscription_id, listing_id)` |
+| `deliveries` | связь «фильтр — объявление», `PRIMARY KEY (filter_id, listing_id)` |
 
 **Защита от дублей** работает на уровне БД: `INSERT ... ON CONFLICT DO NOTHING` в `deliveries`.
 Одно объявление по одному фильтру физически не может быть поставлено в очередь дважды.
@@ -88,6 +103,44 @@ app/
 Новый фильтр границы не задаёт — ему достаточно первой страницы, история всё равно не отправляется.
 Упор в лимит страниц виден в логах как предупреждение: это сигнал уменьшить
 `MONITORING__INTERVAL_SECONDS`.
+
+### Подписки и доступ
+
+Один период доступа — одна строка в `subscriptions`. Оплата во время действующей подписки
+не сжигает остаток: новый период начинается с конца предыдущего, а `Access.until` показывает
+конец всей цепочки. Тарифы (`app/domain/tariffs.py`): день, неделя, месяц (−10%), год (−30%);
+цена считается от `BILLING__DAY_PRICE_*`, поэтому прайс меняется настройкой, а не кодом.
+
+Два инварианта держит БД, а не код:
+
+- пробный период выдаётся один раз — частичный уникальный индекс `(user_id) WHERE is_trial`,
+  поэтому два одновременных нажатия «Демо-доступ» не создадут два триала;
+- повторный вебхук провайдера не продлевает доступ дважды — уникальный
+  `(payment_provider, payment_id)` плюс проверка в `BillingService.activate_paid`.
+
+### Mini App API
+
+`GET /api/health`, `GET /api/me`, `POST /api/trial`, `GET|POST /api/presets`,
+`DELETE /api/presets/{id}`, `POST /api/presets/{id}/monitor`, `GET|POST /api/filters`,
+`DELETE /api/filters/{id}`.
+
+Аутентификация — только по подписи Telegram `initData` (`Authorization: tma <initData>` или
+заголовок `X-Telegram-Init-Data`). Подпись проверяется HMAC-SHA256 по схеме Bot API, просроченная
+дольше 24 часов отклоняется. Ничему из `initData` до проверки подписи доверять нельзя: подменить
+в ней свой `id` на чужой — это одна строка в браузере. Создание фильтров требует активной подписки
+(`402`), доменные ошибки превращаются в `400` с текстом, который можно показать пользователю.
+
+### Кэш выдачи (Redis)
+
+`CachingParser` оборачивает любой парсер и подставляется вместо него в реестре — мониторинг
+и хендлеры о кэше не знают. Две ситуации закрыты сразу:
+
+- повторный одинаковый запрос в пределах `CACHE__TTL_SECONDS` (90 с) берётся из кэша;
+- одновременные одинаковые запросы не превращаются в несколько походов: первый берёт блокировку
+  (`SET NX`) и парсит, остальные ждут его результат.
+
+Глубина учитывается: обход с более ранним `since` покрывает запрос помельче, обратное — нет,
+иначе фильтр получил бы неполную выдачу. Кэш выключается флагом `CACHE__ENABLED=false`.
 
 ### Устойчивость
 
@@ -144,3 +197,7 @@ app/
   а не пустая выдача. Но изменение семантики отдельного поля тестами не ловится.
 - Один экземпляр бота: Redis-хранилище FSM к нескольким репликам готово, но воркер мониторинга
   не разделяет фильтры между процессами — при нескольких репликах объявления будут искаться дважды.
+- Не реализовано (следующие шаги): мультиязычность (`locales/` + aiogram-i18n) и выбор языка
+  на онбординге, приём платежей Telegram Stars и CryptoBot (`BillingService.activate_paid`
+  ждёт вызова от провайдера), middleware проверки подписки в боте, фронтенд Mini App
+  и эндпоинт истории найденных объявлений.

@@ -14,7 +14,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import InlineKeyboardMarkup, LinkPreviewOptions
 
-from app.domain.entities import Listing, Subscription
+from app.domain.entities import Filter, Listing
 from app.domain.errors import NotificationError, RecipientUnavailableError
 from app.handlers import keyboards
 
@@ -28,10 +28,8 @@ class TelegramNotifier:
     def __init__(self, bot: Bot) -> None:
         self._bot = bot
 
-    async def send_listing(
-        self, chat_id: int, subscription: Subscription, listing: Listing
-    ) -> None:
-        text = format_listing(subscription, listing)
+    async def send_listing(self, chat_id: int, search_filter: Filter, listing: Listing) -> None:
+        text = format_listing(search_filter, listing)
         markup = keyboards.listing_actions(listing.url)
         try:
             await self._send(chat_id, text, listing.image_url, markup)
@@ -80,7 +78,7 @@ class TelegramNotifier:
         )
 
 
-def format_listing(subscription: Subscription, listing: Listing) -> str:
+def format_listing(search_filter: Filter, listing: Listing) -> str:
     lines = [f"🔔 <b>{escape(listing.title)}</b>"]
     if listing.price is not None:
         lines.append(f"💰 {_format_price(listing.price)} {escape(listing.currency or '')}".rstrip())
@@ -88,7 +86,7 @@ def format_listing(subscription: Subscription, listing: Listing) -> str:
         lines.append(f"📍 {escape(listing.location)}")
     if listing.published_at:
         lines.append(f"🕒 {listing.published_at:%d.%m.%Y %H:%M}")
-    lines.append(f"🔎 Фильтр: {escape(subscription.title)}")
+    lines.append(f"🔎 Фильтр: {escape(search_filter.title)}")
     # Ссылка есть в кнопке под сообщением, в тексте её дублировать не нужно.
     return "\n".join(lines)
 

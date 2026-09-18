@@ -33,13 +33,15 @@ class UserModel(TimestampMixin, Base):
     username: Mapped[str | None] = mapped_column(String(64))
     full_name: Mapped[str] = mapped_column(String(256), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    # Язык интерфейса, выбранный на онбординге. NULL — пользователь ещё не выбирал.
+    language_code: Mapped[str | None] = mapped_column(String(5))
 
 
-class SubscriptionModel(TimestampMixin, Base):
+class FilterModel(TimestampMixin, Base):
     """Фильтр поиска пользователя. Параметры поиска хранятся в JSONB."""
 
-    __tablename__ = "subscriptions"
-    __table_args__ = (Index("ix_subscriptions_active_marketplace", "is_active", "marketplace"),)
+    __tablename__ = "filters"
+    __table_args__ = (Index("ix_filters_active_marketplace", "is_active", "marketplace"),)
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -50,6 +52,62 @@ class SubscriptionModel(TimestampMixin, Base):
     criteria: Mapped[dict[str, Any]] = mapped_column(JSONB)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SubscriptionModel(TimestampMixin, Base):
+    """Оплаченный доступ. Одна строка — один период; продление добавляет новую строку."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index("ix_subscriptions_user_ends_at", "user_id", "ends_at"),
+        # Пробный период — один на пользователя. Это гарантирует БД, а не код:
+        # параллельные нажатия «Демо-доступ» не создадут два триала.
+        Index(
+            "uq_subscriptions_trial_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_trial"),
+        ),
+        # Повтор вебхука провайдера не должен продлевать доступ второй раз.
+        Index(
+            "uq_subscriptions_payment",
+            "payment_provider",
+            "payment_id",
+            unique=True,
+            postgresql_where=text("payment_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    # Код тарифа из app.domain.tariffs.Tariff — строкой, чтобы новый тариф
+    # не требовал миграции типа в PostgreSQL.
+    tariff: Mapped[str] = mapped_column(String(16))
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    is_trial: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    payment_provider: Mapped[str | None] = mapped_column(String(16))
+    payment_id: Mapped[str | None] = mapped_column(String(64))
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str | None] = mapped_column(String(8))
+
+
+class SearchPresetModel(TimestampMixin, Base):
+    """Сохранённая форма поиска из Mini App. Из пресета одним действием создаётся фильтр."""
+
+    __tablename__ = "search_presets"
+    __table_args__ = (UniqueConstraint("user_id", "name"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64))
+    marketplace: Mapped[str] = mapped_column(String(32))
+    # Тот же формат, что и в filters.criteria — пресет разворачивается в фильтр без конвертации.
+    criteria: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
 class ListingModel(Base):
@@ -97,13 +155,13 @@ class DeliveryModel(Base):
     __table_args__ = (
         Index(
             "ix_deliveries_pending",
-            "subscription_id",
+            "filter_id",
             postgresql_where=text("sent_at IS NULL"),
         ),
     )
 
-    subscription_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("subscriptions.id", ondelete="CASCADE"), primary_key=True
+    filter_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("filters.id", ondelete="CASCADE"), primary_key=True
     )
     listing_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True

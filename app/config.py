@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr
@@ -18,7 +19,8 @@ class BotSettings(BaseModel):
     # memory — состояние диалога живёт в процессе и теряется при перезапуске;
     # redis — переживает перезапуск и нужен, если экземпляров бота больше одного.
     fsm_storage: Literal["memory", "redis"] = "memory"
-    redis_url: str = "redis://localhost:6379/0"
+    # Адрес Mini App (Web App): кнопка «Личный кабинет» открывает эту страницу.
+    webapp_url: str | None = None
 
 
 class DatabaseSettings(BaseModel):
@@ -55,6 +57,37 @@ class HttpSettings(BaseModel):
     proxy: str | None = None
 
 
+class RedisSettings(BaseModel):
+    """Один Redis на всё: FSM-хранилище бота и кэш парсеров (разные префиксы ключей)."""
+
+    url: str = "redis://localhost:6379/0"
+
+
+class CacheSettings(BaseModel):
+    enabled: bool = True
+    # Столько живёт выдача площадки. Больше интервала мониторинга ставить нельзя:
+    # объявления «протухнут» и новые придут с задержкой.
+    ttl_seconds: float = Field(default=90.0, gt=0)
+    lock_ttl_seconds: float = Field(default=30.0, gt=0)
+    wait_seconds: float = Field(default=5.0, ge=0)
+
+
+class BillingSettings(BaseModel):
+    """Прайс за один день; скидки длинных тарифов заданы в app/domain/tariffs.py."""
+
+    day_price_stars: int = Field(default=25, ge=1)
+    day_price_usd: Decimal = Field(default=Decimal("0.50"), gt=0)
+
+
+class ApiSettings(BaseModel):
+    """Web API для Mini App."""
+
+    host: str = "0.0.0.0"
+    port: int = 8080
+    # Источники, которым разрешён доступ к API из браузера (страница Mini App).
+    cors_origins: list[str] = ["https://web.telegram.org"]
+
+
 class ParserSettings(BaseModel):
     """Общие для всех площадок параметры обхода выдачи."""
 
@@ -72,7 +105,8 @@ class MonitoringSettings(BaseModel):
     publish_grace_minutes: int = Field(default=10, ge=0)
     max_delivery_attempts: int = Field(default=3, ge=1)
     delivery_batch_size: int = Field(default=20, ge=1)
-    max_subscriptions_per_user: int = Field(default=10, ge=1)
+    max_filters_per_user: int = Field(default=10, ge=1)
+    max_presets_per_user: int = Field(default=20, ge=1)
 
 
 class Settings(BaseSettings):
@@ -87,6 +121,10 @@ class Settings(BaseSettings):
     db: DatabaseSettings = DatabaseSettings()
     http: HttpSettings = HttpSettings()
     parser: ParserSettings = ParserSettings()
+    redis: RedisSettings = RedisSettings()
+    cache: CacheSettings = CacheSettings()
+    billing: BillingSettings = BillingSettings()
+    api: ApiSettings = ApiSettings()
     monitoring: MonitoringSettings = MonitoringSettings()
     enabled_marketplaces: list[str] = ["olx_ua"]
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

@@ -5,7 +5,6 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
 from contextlib import suppress
 from datetime import timedelta
 
@@ -18,86 +17,40 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
 
-from app.config import BotSettings, HttpSettings, Settings
-from app.database.session import create_engine, create_session_factory
+from app.composition import (
+    build_cache,
+    build_engine,
+    build_filter_service,
+    build_parser_registry,
+    build_uow_factory,
+)
+from app.config import BotSettings, Settings
 from app.handlers import create_root_router
 from app.notifications.telegram import TelegramNotifier
-from app.repositories import SqlAlchemyUnitOfWork
-from app.services.interfaces import UnitOfWork
 from app.services.monitoring import MonitoringOptions, MonitoringService
-from app.services.parsers import MarketplaceParser, ParserRegistry
-from app.services.parsers.http_client import HttpClient, HttpClientOptions
-from app.services.parsers.olx_ua import DEFAULT_HEADERS as OLX_HEADERS
-from app.services.parsers.olx_ua import OlxUaParser
-from app.services.subscriptions import SubscriptionService
 from app.workers.monitor import MonitoringWorker
 
 logger = logging.getLogger(__name__)
 
-ParserFactory = Callable[[Settings], MarketplaceParser]
 
-
-def _http_client(settings: HttpSettings, headers: dict[str, str]) -> HttpClient:
-    return HttpClient(
-        HttpClientOptions(
-            impersonate=settings.impersonate,
-            timeout_seconds=settings.timeout_seconds,
-            max_retries=settings.max_retries,
-            backoff_base_seconds=settings.backoff_base_seconds,
-            backoff_max_seconds=settings.backoff_max_seconds,
-            min_request_interval_seconds=settings.min_request_interval_seconds,
-            proxy=settings.proxy,
-        ),
-        default_headers=headers,
-    )
-
-
-# Новая площадка = новая строка здесь + код площадки в ENABLED_MARKETPLACES.
-# У каждого парсера свой HTTP-клиент: свои cookies, свой темп запросов.
-PARSER_FACTORIES: dict[str, ParserFactory] = {
-    OlxUaParser.code: lambda s: OlxUaParser(
-        _http_client(s.http, OLX_HEADERS),
-        page_size=s.parser.page_size,
-        max_pages=s.parser.max_pages,
-    ),
-}
-
-
-def create_storage(bot_settings: BotSettings) -> BaseStorage:
+def create_storage(bot_settings: BotSettings, redis_url: str) -> BaseStorage:
     """MemoryStorage — по умолчанию; RedisStorage — если диалоги должны переживать перезапуск."""
     if bot_settings.fsm_storage == "redis":
-        return RedisStorage.from_url(bot_settings.redis_url)
+        return RedisStorage.from_url(redis_url)
     return MemoryStorage()
 
 
-def build_parser_registry(settings: Settings) -> ParserRegistry:
-    registry = ParserRegistry()
-    for code in settings.enabled_marketplaces:
-        factory = PARSER_FACTORIES.get(code)
-        if factory is None:
-            raise ValueError(f"Неизвестная площадка в ENABLED_MARKETPLACES: {code}")
-        registry.register(factory(settings))
-    return registry
-
-
 async def run(settings: Settings) -> None:
-    engine = create_engine(settings.db)
-    session_factory = create_session_factory(engine)
-
-    def uow_factory() -> UnitOfWork:
-        return SqlAlchemyUnitOfWork(session_factory)
-
-    parsers = build_parser_registry(settings)
+    engine = build_engine(settings)
+    uow_factory = build_uow_factory(engine)
+    cache = build_cache(settings)
+    parsers = build_parser_registry(settings, cache)
     bot = Bot(
         token=settings.bot.token.get_secret_value(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    subscription_service = SubscriptionService(
-        uow_factory,
-        parsers,
-        max_subscriptions_per_user=settings.monitoring.max_subscriptions_per_user,
-    )
+    filter_service = build_filter_service(settings, uow_factory, parsers)
     monitoring_service = MonitoringService(
         uow_factory,
         parsers,
@@ -115,7 +68,7 @@ async def run(settings: Settings) -> None:
 
     # Dependency Injection aiogram: всё, что передано в Dispatcher, доступно хендлерам по имени.
     dispatcher = Dispatcher(
-        storage=create_storage(settings.bot), subscription_service=subscription_service
+        storage=create_storage(settings.bot, settings.redis.url), filter_service=filter_service
     )
     dispatcher.include_router(create_root_router())
 
@@ -161,6 +114,8 @@ async def run(settings: Settings) -> None:
         await parsers.aclose()
         await dispatcher.storage.close()
         await bot.session.close()
+        if cache is not None:
+            await cache.aclose()
         await engine.dispose()
 
 

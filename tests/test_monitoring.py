@@ -3,17 +3,17 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-from app.database.models import DeliveryModel, SubscriptionModel, UserModel
+from app.database.models import DeliveryModel, FilterModel, UserModel
 from app.domain.entities import Listing, SearchCriteria
 from app.domain.errors import (
+    FilterLimitExceededError,
+    FilterNotFoundError,
     NotificationError,
     RecipientUnavailableError,
-    SubscriptionLimitExceededError,
-    SubscriptionNotFoundError,
 )
+from app.services.filters import FilterService
 from app.services.monitoring import MonitoringOptions, MonitoringService
 from app.services.parsers import ParserRegistry
-from app.services.subscriptions import SubscriptionService
 from tests.conftest import FakeNotifier, FakeParser, UowFactory
 
 
@@ -39,8 +39,8 @@ def notifier() -> FakeNotifier:
 
 
 @pytest.fixture
-def subscriptions(uow_factory: UowFactory, parser: FakeParser) -> SubscriptionService:
-    return SubscriptionService(uow_factory, ParserRegistry([parser]), max_subscriptions_per_user=2)
+def filters(uow_factory: UowFactory, parser: FakeParser) -> FilterService:
+    return FilterService(uow_factory, ParserRegistry([parser]), max_filters_per_user=2)
 
 
 @pytest.fixture
@@ -55,19 +55,19 @@ def monitoring(
     )
 
 
-async def create_subscription(service: SubscriptionService, user_id: int, query: str) -> int:
+async def create_filter(service: FilterService, user_id: int, query: str) -> int:
     await service.register_user(user_id, f"user{user_id}", f"User {user_id}")
     return (await service.create(user_id, "fake", SearchCriteria(query=query))).id
 
 
 async def test_new_listing_is_delivered_exactly_once(
-    subscriptions: SubscriptionService,
+    filters: FilterService,
     monitoring: MonitoringService,
     parser: FakeParser,
     notifier: FakeNotifier,
     uow_factory: UowFactory,
 ) -> None:
-    await create_subscription(subscriptions, 1, "iphone")
+    await create_filter(filters, 1, "iphone")
     parser.results["iphone"] = [listing("new"), listing("old-promoted", age=timedelta(days=30))]
 
     first = await monitoring.run_cycle()
@@ -84,13 +84,13 @@ async def test_new_listing_is_delivered_exactly_once(
 
 
 async def test_same_search_is_requested_once_for_all_users(
-    subscriptions: SubscriptionService,
+    filters: FilterService,
     monitoring: MonitoringService,
     parser: FakeParser,
     notifier: FakeNotifier,
 ) -> None:
-    await create_subscription(subscriptions, 1, "bike")
-    await create_subscription(subscriptions, 2, "bike")
+    await create_filter(filters, 1, "bike")
+    await create_filter(filters, 2, "bike")
     parser.results["bike"] = [listing("b1")]
 
     stats = await monitoring.run_cycle()
@@ -101,13 +101,13 @@ async def test_same_search_is_requested_once_for_all_users(
 
 
 async def test_parser_failure_does_not_stop_other_searches(
-    subscriptions: SubscriptionService,
+    filters: FilterService,
     monitoring: MonitoringService,
     parser: FakeParser,
     notifier: FakeNotifier,
 ) -> None:
-    await create_subscription(subscriptions, 1, "broken")
-    await create_subscription(subscriptions, 1, "working")
+    await create_filter(filters, 1, "broken")
+    await create_filter(filters, 1, "working")
     parser.failing_queries.add("broken")
     parser.results["working"] = [listing("w1")]
 
@@ -118,12 +118,12 @@ async def test_parser_failure_does_not_stop_other_searches(
 
 
 async def test_temporary_notification_failure_is_retried_limited_times(
-    subscriptions: SubscriptionService,
+    filters: FilterService,
     monitoring: MonitoringService,
     parser: FakeParser,
     notifier: FakeNotifier,
 ) -> None:
-    await create_subscription(subscriptions, 1, "tv")
+    await create_filter(filters, 1, "tv")
     parser.results["tv"] = [listing("t1")]
     notifier.error = NotificationError("network down")
 
@@ -133,13 +133,13 @@ async def test_temporary_notification_failure_is_retried_limited_times(
 
 
 async def test_unavailable_recipient_is_deactivated(
-    subscriptions: SubscriptionService,
+    filters: FilterService,
     monitoring: MonitoringService,
     parser: FakeParser,
     notifier: FakeNotifier,
     uow_factory: UowFactory,
 ) -> None:
-    await create_subscription(subscriptions, 1, "sofa")
+    await create_filter(filters, 1, "sofa")
     parser.results["sofa"] = [listing("s1")]
     notifier.error = RecipientUnavailableError("bot was blocked by the user")
 
@@ -147,49 +147,49 @@ async def test_unavailable_recipient_is_deactivated(
     next_stats = await monitoring.run_cycle()
 
     assert stats.deactivated_users == {1}
-    assert next_stats.subscriptions == 0
+    assert next_stats.filters == 0
     async with uow_factory() as uow:
         session = uow._require_session()  # type: ignore[attr-defined]
         assert await session.scalar(select(UserModel.is_active).where(UserModel.id == 1)) is False
-        assert await session.scalar(select(SubscriptionModel.is_active)) is False
+        assert await session.scalar(select(FilterModel.is_active)) is False
 
 
-async def test_subscription_service_limits_and_ownership(
-    subscriptions: SubscriptionService,
+async def test_filter_service_limits_and_ownership(
+    filters: FilterService,
 ) -> None:
-    sub_id = await create_subscription(subscriptions, 1, "a")
-    await subscriptions.create(1, "fake", SearchCriteria(query="b"))
+    sub_id = await create_filter(filters, 1, "a")
+    await filters.create(1, "fake", SearchCriteria(query="b"))
 
-    with pytest.raises(SubscriptionLimitExceededError):
-        await subscriptions.create(1, "fake", SearchCriteria(query="c"))
+    with pytest.raises(FilterLimitExceededError):
+        await filters.create(1, "fake", SearchCriteria(query="c"))
 
-    await subscriptions.register_user(2, None, "Stranger")
-    with pytest.raises(SubscriptionNotFoundError):
-        await subscriptions.delete(2, sub_id)
+    await filters.register_user(2, None, "Stranger")
+    with pytest.raises(FilterNotFoundError):
+        await filters.delete(2, sub_id)
 
-    toggled = await subscriptions.toggle(1, sub_id)
+    toggled = await filters.toggle(1, sub_id)
     assert toggled.is_active is False
     assert toggled.criteria == SearchCriteria(query="a")
 
-    await subscriptions.delete(1, sub_id)
-    assert [s.criteria.query for s in await subscriptions.list(1)] == ["b"]
+    await filters.delete(1, sub_id)
+    assert [s.criteria.query for s in await filters.list(1)] == ["b"]
 
 
 async def _last_checked_at(uow_factory: UowFactory) -> datetime:
     async with uow_factory() as uow:
         session = uow._require_session()  # type: ignore[attr-defined]
-        value = await session.scalar(select(SubscriptionModel.last_checked_at))
+        value = await session.scalar(select(FilterModel.last_checked_at))
     assert isinstance(value, datetime)
     return value
 
 
 async def test_pagination_boundary_grows_from_last_check(
-    subscriptions: SubscriptionService,
+    filters: FilterService,
     monitoring: MonitoringService,
     parser: FakeParser,
     uow_factory: UowFactory,
 ) -> None:
-    await create_subscription(subscriptions, 1, "car")
+    await create_filter(filters, 1, "car")
     parser.results["car"] = [listing("c1")]
 
     await monitoring.run_cycle()  # первый прогон: границы нет, парсеру хватит одной страницы
@@ -201,16 +201,16 @@ async def test_pagination_boundary_grows_from_last_check(
 
 
 async def test_pagination_boundary_covers_the_oldest_check_in_group(
-    subscriptions: SubscriptionService,
+    filters: FilterService,
     monitoring: MonitoringService,
     parser: FakeParser,
 ) -> None:
     """Один запрос обслуживает несколько фильтров — листать надо под самый отстающий из них."""
-    await create_subscription(subscriptions, 1, "bike")
+    await create_filter(filters, 1, "bike")
     parser.results["bike"] = [listing("b1")]
     await monitoring.run_cycle()
 
-    await create_subscription(subscriptions, 2, "bike")
+    await create_filter(filters, 2, "bike")
     await monitoring.run_cycle()
     await monitoring.run_cycle()
 

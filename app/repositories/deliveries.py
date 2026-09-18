@@ -15,7 +15,7 @@ class SqlAlchemyDeliveryRepository:
         self._session = session
 
     async def add_many(
-        self, subscription_id: int, listing_ids: Sequence[int], *, skip_delivery: bool = False
+        self, filter_id: int, listing_ids: Sequence[int], *, skip_delivery: bool = False
     ) -> int:
         if not listing_ids:
             return 0
@@ -25,25 +25,25 @@ class SqlAlchemyDeliveryRepository:
             insert(DeliveryModel)
             .values(
                 [
-                    {"subscription_id": subscription_id, "listing_id": lid, "sent_at": sent_at}
+                    {"filter_id": filter_id, "listing_id": lid, "sent_at": sent_at}
                     for lid in dict.fromkeys(listing_ids)
                 ]
             )
             # Защита от дублей на уровне БД: повторная вставка той же пары молча игнорируется.
-            .on_conflict_do_nothing(index_elements=["subscription_id", "listing_id"])
+            .on_conflict_do_nothing(index_elements=["filter_id", "listing_id"])
             .returning(DeliveryModel.listing_id)
         )
         result = await self._session.execute(stmt)
         return len(result.all())
 
     async def get_pending(
-        self, subscription_id: int, *, max_attempts: int, limit: int
+        self, filter_id: int, *, max_attempts: int, limit: int
     ) -> Sequence[PendingDelivery]:
         rows = await self._session.execute(
             select(DeliveryModel, ListingModel)
             .join(ListingModel, ListingModel.id == DeliveryModel.listing_id)
             .where(
-                DeliveryModel.subscription_id == subscription_id,
+                DeliveryModel.filter_id == filter_id,
                 DeliveryModel.sent_at.is_(None),
                 DeliveryModel.attempts < max_attempts,
             )
@@ -52,7 +52,7 @@ class SqlAlchemyDeliveryRepository:
         )
         return [
             PendingDelivery(
-                subscription_id=delivery.subscription_id,
+                filter_id=delivery.filter_id,
                 listing_id=delivery.listing_id,
                 listing=listing_to_entity(listing),
                 attempts=delivery.attempts,
@@ -60,21 +60,21 @@ class SqlAlchemyDeliveryRepository:
             for delivery, listing in rows.tuples()
         ]
 
-    async def mark_sent(self, subscription_id: int, listing_id: int, sent_at: datetime) -> None:
+    async def mark_sent(self, filter_id: int, listing_id: int, sent_at: datetime) -> None:
         await self._session.execute(
             update(DeliveryModel)
             .where(
-                DeliveryModel.subscription_id == subscription_id,
+                DeliveryModel.filter_id == filter_id,
                 DeliveryModel.listing_id == listing_id,
             )
             .values(sent_at=sent_at)
         )
 
-    async def register_failure(self, subscription_id: int, listing_id: int) -> None:
+    async def register_failure(self, filter_id: int, listing_id: int) -> None:
         await self._session.execute(
             update(DeliveryModel)
             .where(
-                DeliveryModel.subscription_id == subscription_id,
+                DeliveryModel.filter_id == filter_id,
                 DeliveryModel.listing_id == listing_id,
             )
             .values(attempts=DeliveryModel.attempts + 1)

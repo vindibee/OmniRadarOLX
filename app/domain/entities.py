@@ -6,6 +6,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from app.domain.tariffs import Tariff
+
 
 @dataclass(frozen=True, slots=True)
 class SearchCriteria:
@@ -59,10 +61,12 @@ class User:
     username: str | None
     full_name: str
     is_active: bool = True
+    # Язык интерфейса; None — пользователь ещё не выбирал его на онбординге.
+    language_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class Subscription:
+class Filter:
     id: int
     user_id: int
     marketplace: str
@@ -74,10 +78,50 @@ class Subscription:
 
 
 @dataclass(frozen=True, slots=True)
+class Subscription:
+    """Оплаченный (или пробный) период доступа."""
+
+    id: int
+    user_id: int
+    tariff: Tariff
+    starts_at: datetime
+    ends_at: datetime
+    is_trial: bool = False
+    payment_provider: str | None = None
+    payment_id: str | None = None
+
+    def is_active_at(self, moment: datetime) -> bool:
+        return self.starts_at <= moment < self.ends_at
+
+
+@dataclass(frozen=True, slots=True)
+class Access:
+    """Ответ на единственный вопрос: можно ли пользователю пользоваться ботом сейчас."""
+
+    is_allowed: bool
+    until: datetime | None = None
+    tariff: Tariff | None = None
+    is_trial: bool = False
+    trial_available: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPreset:
+    """Сохранённая форма поиска. Разворачивается в фильтр без конвертации."""
+
+    id: int
+    user_id: int
+    name: str
+    marketplace: str
+    criteria: SearchCriteria
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class PendingDelivery:
     """Объявление, найденное по подписке, но ещё не доставленное пользователю."""
 
-    subscription_id: int
+    filter_id: int
     listing_id: int
     listing: Listing
     attempts: int

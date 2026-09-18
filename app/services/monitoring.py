@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from app.domain.entities import Listing, Subscription
+from app.domain.entities import Filter, Listing
 from app.domain.errors import NotificationError, RecipientUnavailableError
 from app.services.interfaces import Notifier, UnitOfWorkFactory
 from app.services.parsers.errors import ParserError
@@ -29,7 +29,7 @@ class MonitoringOptions:
 
 @dataclass(slots=True)
 class CycleStats:
-    subscriptions: int = 0
+    filters: int = 0
     searches: int = 0
     failed_searches: int = 0
     new_listings: int = 0
@@ -57,17 +57,17 @@ class MonitoringService:
     async def run_cycle(self) -> CycleStats:
         stats = CycleStats()
         async with self._uow_factory() as uow:
-            subscriptions = await uow.subscriptions.list_active(self._parsers.codes)
-        stats.subscriptions = len(subscriptions)
+            filters = await uow.filters.list_active(self._parsers.codes)
+        stats.filters = len(filters)
 
         # Одинаковые запросы разных пользователей выполняем один раз — меньше нагрузка и риск бана.
-        groups: dict[tuple[str, str], list[Subscription]] = defaultdict(list)
-        for subscription in subscriptions:
-            groups[_search_key(subscription)].append(subscription)
+        groups: dict[tuple[str, str], list[Filter]] = defaultdict(list)
+        for search_filter in filters:
+            groups[_search_key(search_filter)].append(search_filter)
 
         semaphore = asyncio.Semaphore(self._options.concurrency)
 
-        async def process_group(group: list[Subscription]) -> None:
+        async def process_group(group: list[Filter]) -> None:
             async with semaphore:
                 await self._process_group(group, stats)
 
@@ -76,7 +76,7 @@ class MonitoringService:
                 tg.create_task(process_group(group))
         return stats
 
-    async def _process_group(self, group: Sequence[Subscription], stats: CycleStats) -> None:
+    async def _process_group(self, group: Sequence[Filter], stats: CycleStats) -> None:
         head = group[0]
         stats.searches += 1
         try:
@@ -93,14 +93,14 @@ class MonitoringService:
             logger.exception("Непредвиденная ошибка парсера %s", head.marketplace)
             return
 
-        for subscription in group:
+        for search_filter in group:
             try:
-                await self._store(subscription, listings, stats)
-                await self._deliver(subscription, stats)
+                await self._store(search_filter, listings, stats)
+                await self._deliver(search_filter, stats)
             except Exception:
-                logger.exception("Ошибка обработки фильтра #%d", subscription.id)
+                logger.exception("Ошибка обработки фильтра #%d", search_filter.id)
 
-    def _since(self, group: Sequence[Subscription]) -> datetime | None:
+    def _since(self, group: Sequence[Filter]) -> datetime | None:
         """Насколько глубоко парсеру листать выдачу: до самой ранней «последней проверки» группы.
 
         Фильтры, которые ещё ни разу не проверялись, границу не задают: для них достаточно первой
@@ -112,7 +112,7 @@ class MonitoringService:
         return min(checked) - self._options.publish_grace
 
     async def _store(
-        self, subscription: Subscription, listings: Sequence[Listing], stats: CycleStats
+        self, search_filter: Filter, listings: Sequence[Listing], stats: CycleStats
     ) -> None:
         now = self._clock()
         async with self._uow_factory() as uow:
@@ -121,53 +121,51 @@ class MonitoringService:
             stale: list[int] = []
             for listing in listings:
                 listing_id = ids[(listing.marketplace, listing.external_id)]
-                (fresh if self._is_fresh(subscription, listing) else stale).append(listing_id)
+                (fresh if self._is_fresh(search_filter, listing) else stale).append(listing_id)
 
-            stats.new_listings += await uow.deliveries.add_many(subscription.id, fresh)
+            stats.new_listings += await uow.deliveries.add_many(search_filter.id, fresh)
             # Старые объявления запоминаем как «виденные», чтобы не отправить их позже.
-            await uow.deliveries.add_many(subscription.id, stale, skip_delivery=True)
-            await uow.subscriptions.mark_checked(subscription.id, now)
+            await uow.deliveries.add_many(search_filter.id, stale, skip_delivery=True)
+            await uow.filters.mark_checked(search_filter.id, now)
             await uow.commit()
 
-    def _is_fresh(self, subscription: Subscription, listing: Listing) -> bool:
+    def _is_fresh(self, search_filter: Filter, listing: Listing) -> bool:
         if listing.published_at is None:
             # Без даты публикации полагаемся только на дедупликацию, но не в первом прогоне.
-            return subscription.last_checked_at is not None
-        return listing.published_at >= subscription.created_at - self._options.publish_grace
+            return search_filter.last_checked_at is not None
+        return listing.published_at >= search_filter.created_at - self._options.publish_grace
 
-    async def _deliver(self, subscription: Subscription, stats: CycleStats) -> None:
+    async def _deliver(self, search_filter: Filter, stats: CycleStats) -> None:
         async with self._uow_factory() as uow:
             pending = await uow.deliveries.get_pending(
-                subscription.id,
+                search_filter.id,
                 max_attempts=self._options.max_delivery_attempts,
                 limit=self._options.delivery_batch_size,
             )
             for item in pending:
                 try:
                     await self._notifier.send_listing(
-                        subscription.user_id, subscription, item.listing
+                        search_filter.user_id, search_filter, item.listing
                     )
                 except RecipientUnavailableError:
                     logger.info(
-                        "Пользователь %d недоступен, отключаю его фильтры", subscription.user_id
+                        "Пользователь %d недоступен, отключаю его фильтры", search_filter.user_id
                     )
-                    await uow.users.set_active(subscription.user_id, False)
-                    await uow.subscriptions.deactivate_for_user(subscription.user_id)
+                    await uow.users.set_active(search_filter.user_id, False)
+                    await uow.filters.deactivate_for_user(search_filter.user_id)
                     await uow.commit()
-                    stats.deactivated_users.add(subscription.user_id)
+                    stats.deactivated_users.add(search_filter.user_id)
                     return
                 except NotificationError as exc:
                     logger.warning("Не удалось отправить объявление %d: %s", item.listing_id, exc)
-                    await uow.deliveries.register_failure(item.subscription_id, item.listing_id)
+                    await uow.deliveries.register_failure(item.filter_id, item.listing_id)
                     stats.failed_deliveries += 1
                 else:
-                    await uow.deliveries.mark_sent(
-                        item.subscription_id, item.listing_id, self._clock()
-                    )
+                    await uow.deliveries.mark_sent(item.filter_id, item.listing_id, self._clock())
                     stats.sent += 1
                 # Фиксируем после каждого сообщения: при сбое уже отправленное не уйдёт повторно.
                 await uow.commit()
 
 
-def _search_key(subscription: Subscription) -> tuple[str, str]:
-    return subscription.marketplace, json.dumps(subscription.criteria.to_json(), sort_keys=True)
+def _search_key(search_filter: Filter) -> tuple[str, str]:
+    return search_filter.marketplace, json.dumps(search_filter.criteria.to_json(), sort_keys=True)

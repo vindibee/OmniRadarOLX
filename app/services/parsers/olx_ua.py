@@ -11,7 +11,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, ClassVar
+from typing import Any
 
 from app.domain.entities import Listing, SearchCriteria
 from app.domain.errors import InvalidCriteriaError
@@ -33,8 +33,8 @@ IMAGE_SIZE = "800x600"
 
 
 class OlxUaParser(MarketplaceParser):
-    code: ClassVar[str] = "olx_ua"
-    title: ClassVar[str] = "OLX.ua"
+    code = "olx_ua"
+    title = "OLX.ua"
 
     def __init__(self, http: HttpClient, *, page_size: int = 40, max_pages: int = 5) -> None:
         self._http = http

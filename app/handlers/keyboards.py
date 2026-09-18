@@ -3,16 +3,16 @@ from collections.abc import Sequence
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from app.domain.entities import MarketplaceInfo, Subscription
+from app.domain.entities import Filter, MarketplaceInfo
 from app.handlers.callbacks import (
     ConfirmAction,
     ConfirmCallback,
+    FilterAction,
+    FilterCallback,
     MarketplaceCallback,
     MenuAction,
     MenuCallback,
     SkipCallback,
-    SubscriptionAction,
-    SubscriptionCallback,
 )
 
 
@@ -69,18 +69,14 @@ def confirm() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def subscription_actions(subscription: Subscription) -> InlineKeyboardMarkup:
+def filter_actions(search_filter: Filter) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="⏸ Пауза" if subscription.is_active else "▶️ Включить",
-        callback_data=SubscriptionCallback(
-            action=SubscriptionAction.TOGGLE, subscription_id=subscription.id
-        ),
+        text="⏸ Пауза" if search_filter.is_active else "▶️ Включить",
+        callback_data=FilterCallback(action=FilterAction.TOGGLE, filter_id=search_filter.id),
     )
     builder.button(
         text="🗑 Удалить",
-        callback_data=SubscriptionCallback(
-            action=SubscriptionAction.DELETE, subscription_id=subscription.id
-        ),
+        callback_data=FilterCallback(action=FilterAction.DELETE, filter_id=search_filter.id),
     )
     return builder.as_markup()

@@ -50,7 +50,7 @@ class MonitoringWorker:
                     "Цикл за %.1f c: фильтров %d, запросов %d (ошибок %d), новых %d, "
                     "отправлено %d (ошибок %d)",
                     elapsed,
-                    stats.subscriptions,
+                    stats.filters,
                     stats.searches,
                     stats.failed_searches,
                     stats.new_listings,

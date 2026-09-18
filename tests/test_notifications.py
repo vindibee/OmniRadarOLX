@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from app.domain.entities import Listing, SearchCriteria, Subscription
+from app.domain.entities import Filter, Listing, SearchCriteria
 from app.handlers import keyboards
 from app.handlers.callbacks import MenuAction, MenuCallback
 from app.notifications.telegram import format_listing
@@ -18,7 +18,7 @@ LISTING = Listing(
     location="Київ",
     published_at=datetime(2026, 9, 18, 12, 0, tzinfo=UTC),
 )
-SUBSCRIPTION = Subscription(
+FILTER = Filter(
     id=1,
     user_id=1,
     marketplace="olx_ua",
@@ -39,7 +39,7 @@ def test_listing_keyboard_opens_listing_and_returns_to_menu() -> None:
 
 
 def test_listing_text_has_no_duplicate_link() -> None:
-    text = format_listing(SUBSCRIPTION, LISTING)
+    text = format_listing(FILTER, LISTING)
 
     assert "iPhone 13" in text
     assert "15 500 UAH" in text

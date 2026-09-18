@@ -9,22 +9,22 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from app.domain.entities import SearchCriteria, Subscription
+from app.domain.entities import Filter, SearchCriteria
 from app.handlers import keyboards
 from app.handlers.callbacks import (
     ConfirmAction,
     ConfirmCallback,
+    FilterAction,
+    FilterCallback,
     MarketplaceCallback,
     MenuAction,
     MenuCallback,
     SkipCallback,
-    SubscriptionAction,
-    SubscriptionCallback,
 )
 from app.handlers.states import CreateFilter
-from app.services.subscriptions import SubscriptionService
+from app.services.filters import FilterService
 
-router = Router(name="subscriptions")
+router = Router(name="filters")
 
 QUERY_MAX_LENGTH = 100
 
@@ -34,13 +34,13 @@ QUERY_MAX_LENGTH = 100
 
 @router.callback_query(MenuCallback.filter(F.action == MenuAction.NEW_FILTER))
 async def start_create(
-    callback: CallbackQuery, state: FSMContext, subscription_service: SubscriptionService
+    callback: CallbackQuery, state: FSMContext, filter_service: FilterService
 ) -> None:
     await state.clear()
-    await subscription_service.register_user(
+    await filter_service.register_user(
         callback.from_user.id, callback.from_user.username, callback.from_user.full_name
     )
-    marketplaces = subscription_service.marketplaces()
+    marketplaces = filter_service.marketplaces()
     if len(marketplaces) == 1:
         # Одна площадка — не заставляем выбирать.
         await state.update_data(marketplace=marketplaces[0].code)
@@ -117,10 +117,10 @@ async def skip_price_max(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(CreateFilter.confirm, ConfirmCallback.filter(F.action == ConfirmAction.SAVE))
 async def save_filter(
-    callback: CallbackQuery, state: FSMContext, subscription_service: SubscriptionService
+    callback: CallbackQuery, state: FSMContext, filter_service: FilterService
 ) -> None:
     data = await state.get_data()
-    subscription = await subscription_service.create(
+    search_filter = await filter_service.create(
         user_id=callback.from_user.id,
         marketplace=data["marketplace"],
         criteria=_criteria_from(data),
@@ -128,7 +128,7 @@ async def save_filter(
     await state.clear()
     await _edit(
         callback,
-        f"✅ Фильтр «{escape(subscription.title)}» сохранён.\n"
+        f"✅ Фильтр «{escape(search_filter.title)}» сохранён.\n"
         "Пришлю новые объявления, как только они появятся.",
         keyboards.main_menu(),
     )
@@ -146,38 +146,36 @@ async def cancel_create(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(Command("filters"))
-async def cmd_filters(message: Message, subscription_service: SubscriptionService) -> None:
+async def cmd_filters(message: Message, filter_service: FilterService) -> None:
     if message.from_user:
-        await _send_filters(message, message.from_user.id, subscription_service)
+        await _send_filters(message, message.from_user.id, filter_service)
 
 
 @router.callback_query(MenuCallback.filter(F.action == MenuAction.MY_FILTERS))
-async def on_my_filters(callback: CallbackQuery, subscription_service: SubscriptionService) -> None:
+async def on_my_filters(callback: CallbackQuery, filter_service: FilterService) -> None:
     if isinstance(callback.message, Message):
-        await _send_filters(callback.message, callback.from_user.id, subscription_service)
+        await _send_filters(callback.message, callback.from_user.id, filter_service)
     await callback.answer()
 
 
-@router.callback_query(SubscriptionCallback.filter(F.action == SubscriptionAction.TOGGLE))
+@router.callback_query(FilterCallback.filter(F.action == FilterAction.TOGGLE))
 async def on_toggle(
     callback: CallbackQuery,
-    callback_data: SubscriptionCallback,
-    subscription_service: SubscriptionService,
+    callback_data: FilterCallback,
+    filter_service: FilterService,
 ) -> None:
-    subscription = await subscription_service.toggle(
-        callback.from_user.id, callback_data.subscription_id
-    )
-    await _edit(callback, _describe(subscription), keyboards.subscription_actions(subscription))
-    await callback.answer("Фильтр включён" if subscription.is_active else "Фильтр на паузе")
+    search_filter = await filter_service.toggle(callback.from_user.id, callback_data.filter_id)
+    await _edit(callback, _describe(search_filter), keyboards.filter_actions(search_filter))
+    await callback.answer("Фильтр включён" if search_filter.is_active else "Фильтр на паузе")
 
 
-@router.callback_query(SubscriptionCallback.filter(F.action == SubscriptionAction.DELETE))
+@router.callback_query(FilterCallback.filter(F.action == FilterAction.DELETE))
 async def on_delete(
     callback: CallbackQuery,
-    callback_data: SubscriptionCallback,
-    subscription_service: SubscriptionService,
+    callback_data: FilterCallback,
+    filter_service: FilterService,
 ) -> None:
-    await subscription_service.delete(callback.from_user.id, callback_data.subscription_id)
+    await filter_service.delete(callback.from_user.id, callback_data.filter_id)
     await _edit(callback, "🗑 Фильтр удалён.", None)
     await callback.answer()
 
@@ -201,16 +199,14 @@ async def _ask_confirm(message: Message, state: FSMContext) -> None:
     )
 
 
-async def _send_filters(
-    message: Message, user_id: int, subscription_service: SubscriptionService
-) -> None:
-    subscriptions = await subscription_service.list(user_id)
-    if not subscriptions:
+async def _send_filters(message: Message, user_id: int, filter_service: FilterService) -> None:
+    filters = await filter_service.list(user_id)
+    if not filters:
         await message.answer("У вас пока нет фильтров.", reply_markup=keyboards.main_menu())
         return
-    for subscription in subscriptions:
+    for search_filter in filters:
         await message.answer(
-            _describe(subscription), reply_markup=keyboards.subscription_actions(subscription)
+            _describe(search_filter), reply_markup=keyboards.filter_actions(search_filter)
         )
 
 
@@ -247,6 +243,6 @@ def _describe_criteria(criteria: SearchCriteria) -> str:
     return "\n".join(lines)
 
 
-def _describe(subscription: Subscription) -> str:
-    status = "🟢 активен" if subscription.is_active else "⏸ на паузе"
-    return f"<b>{escape(subscription.title)}</b>\nПлощадка: {subscription.marketplace} · {status}"
+def _describe(search_filter: Filter) -> str:
+    status = "🟢 активен" if search_filter.is_active else "⏸ на паузе"
+    return f"<b>{escape(search_filter.title)}</b>\nПлощадка: {search_filter.marketplace} · {status}"
