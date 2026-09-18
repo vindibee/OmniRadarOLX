@@ -3,6 +3,7 @@ from collections.abc import Iterable, Sequence
 from app.domain.entities import Filter, FoundListing, MarketplaceInfo, SearchCriteria, User
 from app.domain.errors import FilterLimitExceededError, FilterNotFoundError
 from app.services.interfaces import UnitOfWork, UnitOfWorkFactory
+from app.services.parsers.catalog import Catalog, load_catalog
 from app.services.parsers.registry import ParserRegistry
 
 TITLE_MAX_LENGTH = 128
@@ -26,6 +27,11 @@ class FilterService:
 
     def marketplaces(self) -> Sequence[MarketplaceInfo]:
         return self._parsers.marketplaces()
+
+    def catalog(self, marketplace: str) -> Catalog:
+        """Справочник площадки для выпадающих списков Mini App."""
+        parser = self._parsers.get(marketplace)  # UnknownMarketplaceError
+        return getattr(parser, "catalog", None) or load_catalog(marketplace)
 
     async def register_user(self, user_id: int, username: str | None, full_name: str) -> None:
         """Язык здесь не трогаем: его выбирает сам пользователь на онбординге в Mini App."""

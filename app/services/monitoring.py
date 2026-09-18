@@ -93,6 +93,14 @@ class MonitoringService:
             logger.exception("Непредвиденная ошибка парсера %s", head.marketplace)
             return
 
+        # Площадка ищет нестрого — точные требования пользователя применяем сами.
+        before = len(listings)
+        listings = [item for item in listings if head.criteria.matches(item)]
+        if before != len(listings):
+            logger.debug(
+                "Фильтр '%s': отсеяно %d из %d", head.title, before - len(listings), before
+            )
+
         for search_filter in group:
             try:
                 await self._store(search_filter, listings, stats)

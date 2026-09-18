@@ -187,6 +187,34 @@ The official `aiocryptopay` wrapper could not be used: it pins `certifi<2024` an
 which conflicts with curl_cffi and aiogram 3.15+. Crypto Pay API is a handful of POST requests, so
 the client is written directly on aiohttp (`app/payments/cryptobot.py`).
 
+### Catalog: cities and categories without IDs
+
+Users never see a numeric identifier — the Mini App shows two linked dropdowns,
+"Region → City" and "Category → Subcategory", with Ukrainian and Russian names. The catalog is
+real, harvested from the marketplace itself by `scripts/build_olx_catalog.py`: categories come
+from OLX's page state (the whole tree), regions and cities from `/api/v1/offers/` per region
+(every listing carries `location.region` and `location.city` with an id and a name). It currently
+holds 24 regions, 510 cities and 16 categories; rerun the script to refresh it.
+
+`GET /api/catalog` serves it to the app, and the parser validates the ids it receives against it:
+a foreign `city_id` raises `InvalidCriteriaError` instead of travelling to the marketplace. The
+selection becomes OLX query parameters (`city_id`, `region_id`, `category_id`,
+`filter_enum_state[0]`) in `OlxUaParser.build_params` — the marketplace API works by id, so no
+slugs are needed.
+
+### Precise keywords
+
+OLX search is loose: ask for "iphone" and cases arrive too. So the form has two fields that work
+on our side, against the listing title:
+
+- **excluded words** — "чохол, скло, ремонт": a listing containing any of them never reaches you;
+- **all query words** — the mode for an exact "аксесуари для iphone": every word must appear in
+  the title, otherwise the listing is dropped.
+
+Filtering happens in `MonitoringService` right after the search and before storing, so the noise
+never enters the history or the notifications. Both settings live in the preset's `criteria JSONB`
+and are shown in the filter list as plain text.
+
 ### Owner's admin panel
 
 `ADMIN_IDS` lists the owners' Telegram ids. They get unlimited access (no subscription to buy), the

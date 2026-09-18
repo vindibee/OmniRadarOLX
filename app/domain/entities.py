@@ -16,13 +16,28 @@ class SearchCriteria:
     query: str
     price_min: Decimal | None = None
     price_max: Decimal | None = None
+    # Площадка ищет нестрого: по «iphone» приедут и чехлы. Эти два поля отсекают лишнее
+    # уже у нас, по заголовку объявления.
+    exclude_words: tuple[str, ...] = ()
+    match_all_words: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def matches(self, listing: Listing) -> bool:
+        """Проходит ли объявление точные требования пользователя."""
+        title = listing.title.casefold()
+        if any(word.casefold() in title for word in self.exclude_words if word.strip()):
+            return False
+        if self.match_all_words:
+            return all(word.casefold() in title for word in self.query.split() if word.strip())
+        return True
 
     def to_json(self) -> dict[str, Any]:
         return {
             "query": self.query,
             "price_min": str(self.price_min) if self.price_min is not None else None,
             "price_max": str(self.price_max) if self.price_max is not None else None,
+            "exclude_words": list(self.exclude_words),
+            "match_all_words": self.match_all_words,
             "extra": dict(self.extra),
         }
 
@@ -35,6 +50,8 @@ class SearchCriteria:
             query=str(data.get("query", "")),
             price_min=to_decimal(data.get("price_min")),
             price_max=to_decimal(data.get("price_max")),
+            exclude_words=tuple(data.get("exclude_words") or ()),
+            match_all_words=bool(data.get("match_all_words")),
             extra=dict(data.get("extra") or {}),
         )
 

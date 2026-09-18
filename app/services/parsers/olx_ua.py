@@ -16,6 +16,7 @@ from typing import Any
 from app.domain.entities import Listing, SearchCriteria
 from app.domain.errors import InvalidCriteriaError
 from app.services.parsers.base import MarketplaceParser
+from app.services.parsers.catalog import Catalog, load_catalog
 from app.services.parsers.errors import ParserResponseError
 from app.services.parsers.http_client import HttpClient
 
@@ -41,10 +42,23 @@ class OlxUaParser(MarketplaceParser):
     code = "olx_ua"
     title = "OLX.ua"
 
-    def __init__(self, http: HttpClient, *, page_size: int = 40, max_pages: int = 5) -> None:
+    def __init__(
+        self,
+        http: HttpClient,
+        *,
+        page_size: int = 40,
+        max_pages: int = 5,
+        catalog: Catalog | None = None,
+    ) -> None:
         self._http = http
         self._page_size = page_size
         self._max_pages = max_pages
+        self._catalog = catalog if catalog is not None else load_catalog(self.code)
+
+    @property
+    def catalog(self) -> Catalog:
+        """Справочник для Mini App: области, города и категории с названиями."""
+        return self._catalog
 
     async def search(
         self, criteria: SearchCriteria, *, since: datetime | None = None
@@ -104,6 +118,15 @@ class OlxUaParser(MarketplaceParser):
         state = criteria.extra.get("state")
         if state is not None and state not in ALLOWED_STATES:
             raise InvalidCriteriaError("Состояние может быть только «new» или «used»")
+        # Город и категорию пользователь выбирает из справочника — чужих id быть не должно.
+        for key, allowed, label in (
+            ("city_id", self._catalog.city_ids, "Город"),
+            ("region_id", self._catalog.region_ids, "Область"),
+            ("category_id", self._catalog.category_ids, "Категория"),
+        ):
+            value = criteria.extra.get(key)
+            if value is not None and allowed and int(value) not in allowed:
+                raise InvalidCriteriaError(f"{label} не найдена в справочнике OLX")
 
     async def aclose(self) -> None:
         await self._http.aclose()

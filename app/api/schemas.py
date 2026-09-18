@@ -20,20 +20,54 @@ Language = Literal["uk", "ru", "en"]
 
 
 class CriteriaIn(BaseModel):
-    """Форма поиска из Mini App: общие поля + специфика площадки в extra."""
+    """Форма поиска из Mini App — понятные поля, id приходят из справочника.
+
+    Mini App показывает названия («Киев», «Электроника»), а сюда присылает выбранные id;
+    парсер проверяет их по справочнику и сам собирает параметры запроса к площадке.
+    """
 
     query: str = Field(min_length=1, max_length=QUERY_MAX_LENGTH)
     price_min: Decimal | None = Field(default=None, ge=0)
     price_max: Decimal | None = Field(default=None, ge=0)
-    # Состояние, категория, город — то, что умеет конкретная площадка.
-    extra: dict[str, Any] = Field(default_factory=dict)
+    condition: Literal["new", "used"] | None = None
+    region_id: int | None = Field(default=None, gt=0)
+    city_id: int | None = Field(default=None, gt=0)
+    category_id: int | None = Field(default=None, gt=0)
+    # Минус-слова: «iphone» минус «чехол», чтобы не приходил мусор.
+    exclude_words: list[str] = Field(default_factory=list, max_length=20)
+    # Требовать все слова запроса в заголовке — точное «аксесуари для iphone».
+    match_all_words: bool = False
 
     def to_domain(self) -> SearchCriteria:
+        extra: dict[str, Any] = {
+            "state": self.condition,
+            "region_id": self.region_id,
+            "city_id": self.city_id,
+            "category_id": self.category_id,
+        }
         return SearchCriteria(
             query=self.query,
             price_min=self.price_min,
             price_max=self.price_max,
-            extra={key: value for key, value in self.extra.items() if value not in (None, "")},
+            exclude_words=tuple(word.strip() for word in self.exclude_words if word.strip()),
+            match_all_words=self.match_all_words,
+            extra={key: value for key, value in extra.items() if value not in (None, "")},
+        )
+
+    @classmethod
+    def from_domain(cls, criteria: SearchCriteria) -> CriteriaIn:
+        """Обратное преобразование — чтобы Mini App показал сохранённый фильтр той же формой."""
+        extra = criteria.extra
+        return cls(
+            query=criteria.query,
+            price_min=criteria.price_min,
+            price_max=criteria.price_max,
+            condition=extra.get("state"),
+            region_id=extra.get("region_id"),
+            city_id=extra.get("city_id"),
+            category_id=extra.get("category_id"),
+            exclude_words=list(criteria.exclude_words),
+            match_all_words=criteria.match_all_words,
         )
 
 
@@ -51,11 +85,26 @@ class TariffIn(BaseModel):
     tariff: Tariff
 
 
+class CatalogItemOut(BaseModel):
+    id: int
+    names: dict[str, str]
+    children: list[CatalogItemOut] = Field(default_factory=list)
+
+
+class CatalogOut(BaseModel):
+    """Справочник для выпадающих списков: области с городами и категории с подкатегориями."""
+
+    marketplace: str
+    generated_at: str
+    regions: list[CatalogItemOut]
+    categories: list[CatalogItemOut]
+
+
 class FilterOut(BaseModel):
     id: int
     marketplace: str
     title: str
-    criteria: dict[str, Any]
+    criteria: CriteriaIn
     is_active: bool
     created_at: datetime
     last_checked_at: datetime | None
@@ -66,7 +115,7 @@ class FilterOut(BaseModel):
             id=item.id,
             marketplace=item.marketplace,
             title=item.title,
-            criteria=item.criteria.to_json(),
+            criteria=CriteriaIn.from_domain(item.criteria),
             is_active=item.is_active,
             created_at=item.created_at,
             last_checked_at=item.last_checked_at,

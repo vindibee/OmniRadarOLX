@@ -8,6 +8,7 @@ const tg = window.Telegram?.WebApp;
 
 const state = {
   me: null,
+  catalog: null,
   filters: [],
   tab: "subscription",
   openFilter: null,
@@ -229,15 +230,54 @@ async function payWithCrypto(tariff) {
 
 // ---------- Поиск и фильтры ----------
 
+function option(value, label) {
+  const node = document.createElement("option");
+  node.value = value;
+  node.textContent = label;
+  return node;
+}
+
+function fillSelect(select, items, placeholderKey) {
+  select.innerHTML = "";
+  select.append(option("", i18n.t(placeholderKey)));
+  items.forEach((item) => select.append(option(item.id, item.names[i18n.lang] || item.names.uk)));
+}
+
+/** Города и подкатегории зависят от выбора выше: показываем только подходящие. */
+function renderCatalogSelects() {
+  if (!state.catalog) return;
+  const regions = state.catalog.regions;
+  const categories = state.catalog.categories;
+  const regionSelect = $("#select-region");
+  const citySelect = $("#select-city");
+  const categorySelect = $("#select-category");
+  const subcategorySelect = $("#select-subcategory");
+
+  fillSelect(regionSelect, regions, "search.anyRegion");
+  fillSelect(citySelect, [], "search.anyCity");
+  fillSelect(categorySelect, categories, "search.anyCategory");
+  fillSelect(subcategorySelect, [], "search.anySubcategory");
+
+  regionSelect.onchange = () => {
+    const region = regions.find((item) => String(item.id) === regionSelect.value);
+    fillSelect(citySelect, region?.children || [], "search.anyCity");
+  };
+  categorySelect.onchange = () => {
+    const category = categories.find((item) => String(item.id) === categorySelect.value);
+    fillSelect(subcategorySelect, category?.children || [], "search.anySubcategory");
+  };
+}
+
 function bindSearchForm() {
   $("#search-form").onsubmit = async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
-    const extra = {};
-    ["state", "city_id", "category_id"].forEach((key) => {
+    const number = (key) => {
       const value = (form.get(key) || "").toString().trim();
-      if (value) extra[key] = key === "state" ? value : Number(value);
-    });
+      return value ? Number(value) : null;
+    };
+    // Подкатегория точнее категории; город точнее области.
+    const categoryId = number("category_id") ?? number("category");
 
     const payload = {
       name: (form.get("name") || "").toString().trim() || null,
@@ -246,7 +286,16 @@ function bindSearchForm() {
         query: form.get("query"),
         price_min: form.get("price_min") || null,
         price_max: form.get("price_max") || null,
-        extra,
+        condition: form.get("condition") || null,
+        region_id: number("city_id") ? null : number("region_id"),
+        city_id: number("city_id"),
+        category_id: categoryId,
+        exclude_words: (form.get("exclude_words") || "")
+          .toString()
+          .split(",")
+          .map((word) => word.trim())
+          .filter(Boolean),
+        match_all_words: form.get("match_all_words") === "on",
       },
     };
 
@@ -281,6 +330,7 @@ function renderFilters() {
     card.className = "rounded-2xl bg-card p-4";
     card.innerHTML = `
       <div class="font-semibold">${item.title}</div>
+      <div class="mt-1 text-sm text-muted">${describeCriteria(item.criteria)}</div>
       <div class="mt-1 text-sm text-muted">
         ${item.is_active ? i18n.t("filters.active") : i18n.t("filters.paused")}
       </div>`;
@@ -302,6 +352,31 @@ function renderFilters() {
     card.append(actions);
     list.append(card);
   });
+}
+
+/** Человеческое описание фильтра: города и категории — названиями, не числами. */
+function describeCriteria(criteria) {
+  const parts = [criteria.query];
+  if (criteria.price_min || criteria.price_max) {
+    parts.push(`${criteria.price_min || "…"} – ${criteria.price_max || "…"}`);
+  }
+  if (criteria.condition) parts.push(i18n.t(`search.state${criteria.condition === "new" ? "New" : "Used"}`));
+  const city = findCatalogName(state.catalog?.regions, criteria.city_id);
+  const region = findCatalogName(state.catalog?.regions, criteria.region_id);
+  const category = findCatalogName(state.catalog?.categories, criteria.category_id);
+  [city || region, category].forEach((name) => name && parts.push(name));
+  if (criteria.exclude_words?.length) parts.push(`− ${criteria.exclude_words.join(", ")}`);
+  return parts.join(" · ");
+}
+
+function findCatalogName(groups, id) {
+  if (!groups || !id) return null;
+  for (const group of groups) {
+    if (group.id === id) return group.names[i18n.lang] || group.names.uk;
+    const child = (group.children || []).find((item) => item.id === id);
+    if (child) return child.names[i18n.lang] || child.names.uk;
+  }
+  return null;
 }
 
 function smallButton(label, onClick) {
@@ -427,6 +502,15 @@ async function refreshMe() {
 }
 
 async function openMain() {
+  if (!state.catalog) {
+    try {
+      state.catalog = await api.catalog();
+    } catch (error) {
+      state.catalog = null; // без справочника форма всё равно работает, только без списков
+    }
+  }
+  renderCatalogSelects();
+
   const isAdmin = state.me.access.is_admin;
   // Вкладка админки существует только у владельца: у остальных её нет в разметке.
   document.querySelector('[data-tab="admin"]').classList.toggle("hidden", !isAdmin);

@@ -165,7 +165,13 @@ async def test_filter_requires_subscription_and_works_after_trial(
     body = {
         "name": "Айфоны до 20к",
         "marketplace": "fake",
-        "criteria": {"query": "iphone 13", "price_max": "20000", "extra": {"city_id": 268}},
+        "criteria": {
+            "query": "iphone 13",
+            "price_max": "20000",
+            "city_id": 268,
+            "condition": "used",
+            "exclude_words": ["чохол"],
+        },
     }
 
     denied = await client.post("/api/filters", json=body, headers=headers)
@@ -176,7 +182,9 @@ async def test_filter_requires_subscription_and_works_after_trial(
     assert trial.status_code == 201 and trial.json()["is_trial"] is True
     assert allowed.status_code == 201
     assert allowed.json()["title"] == "Айфоны до 20к", "имя из формы, а не автозаголовок"
-    assert allowed.json()["criteria"]["extra"] == {"city_id": 268}
+    criteria = allowed.json()["criteria"]
+    assert (criteria["city_id"], criteria["condition"]) == (268, "used")
+    assert criteria["exclude_words"] == ["чохол"], "минус-слова сохраняются в пресете"
 
 
 async def test_second_trial_is_refused(client: AsyncClient, headers: dict[str, str]) -> None:

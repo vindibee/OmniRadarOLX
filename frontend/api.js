@@ -34,6 +34,7 @@ const api = {
   setLanguage: (code) => api.request("/me/language", { method: "PUT", body: { language_code: code } }),
   startTrial: () => api.request("/trial", { method: "POST" }),
 
+  catalog: () => api.request("/catalog"),
   filters: () => api.request("/filters"),
   createFilter: (payload) => api.request("/filters", { method: "POST", body: payload }),
   toggleFilter: (id) => api.request(`/filters/${id}/toggle`, { method: "POST" }),

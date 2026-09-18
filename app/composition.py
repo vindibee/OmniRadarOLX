@@ -26,6 +26,7 @@ from app.services.filters import FilterService
 from app.services.interfaces import Cache, UnitOfWork, UnitOfWorkFactory
 from app.services.parsers import MarketplaceParser, ParserRegistry
 from app.services.parsers.cache import CacheOptions, CachingParser
+from app.services.parsers.catalog import load_catalog
 from app.services.parsers.http_client import HttpClient, HttpClientOptions
 from app.services.parsers.olx_ua import DEFAULT_HEADERS as OLX_HEADERS
 from app.services.parsers.olx_ua import OlxUaParser
@@ -57,6 +58,7 @@ PARSER_FACTORIES: dict[str, ParserFactory] = {
         _http_client(s.http, OLX_HEADERS),
         page_size=s.parser.page_size,
         max_pages=s.parser.max_pages,
+        catalog=load_catalog(OlxUaParser.code),
     ),
 }
 

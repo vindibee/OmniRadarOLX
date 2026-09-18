@@ -91,9 +91,25 @@
               required
               maxlength="100"
               class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
-              placeholder="iPhone 13"
+              placeholder="iphone 13"
             />
           </label>
+
+          <label class="block">
+            <span class="text-sm text-muted" data-i18n="search.exclude"></span>
+            <input
+              name="exclude_words"
+              class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              placeholder="чохол, скло, ремонт"
+            />
+            <span class="mt-1 block text-xs text-muted" data-i18n="search.excludeHint"></span>
+          </label>
+
+          <label class="flex items-center gap-3 rounded-xl bg-card px-4 py-3">
+            <input name="match_all_words" type="checkbox" class="h-5 w-5" />
+            <span class="text-sm" data-i18n="search.matchAll"></span>
+          </label>
+
           <div class="flex gap-3">
             <label class="block flex-1">
               <span class="text-sm text-muted" data-i18n="search.priceMin"></span>
@@ -116,35 +132,54 @@
               />
             </label>
           </div>
+
           <label class="block">
             <span class="text-sm text-muted" data-i18n="search.state"></span>
-            <select name="state" class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none">
+            <select name="condition" class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none">
               <option value="" data-i18n="search.stateAny"></option>
               <option value="new" data-i18n="search.stateNew"></option>
               <option value="used" data-i18n="search.stateUsed"></option>
             </select>
           </label>
+
           <div class="flex gap-3">
             <label class="block flex-1">
-              <span class="text-sm text-muted" data-i18n="search.city"></span>
-              <input
-                name="city_id"
-                type="number"
-                inputmode="numeric"
+              <span class="text-sm text-muted" data-i18n="search.region"></span>
+              <select
+                name="region_id"
+                id="select-region"
                 class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
-              />
+              ></select>
             </label>
             <label class="block flex-1">
-              <span class="text-sm text-muted" data-i18n="search.category"></span>
-              <input
-                name="category_id"
-                type="number"
-                inputmode="numeric"
+              <span class="text-sm text-muted" data-i18n="search.city"></span>
+              <select
+                name="city_id"
+                id="select-city"
                 class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
-              />
+              ></select>
             </label>
           </div>
-          <p class="text-xs text-muted" data-i18n="search.idsHint"></p>
+
+          <div class="flex gap-3">
+            <label class="block flex-1">
+              <span class="text-sm text-muted" data-i18n="search.category"></span>
+              <select
+                name="category"
+                id="select-category"
+                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              ></select>
+            </label>
+            <label class="block flex-1">
+              <span class="text-sm text-muted" data-i18n="search.subcategory"></span>
+              <select
+                name="category_id"
+                id="select-subcategory"
+                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              ></select>
+            </label>
+          </div>
+
           <label class="block">
             <span class="text-sm text-muted" data-i18n="search.name"></span>
             <input
@@ -153,6 +188,7 @@
               class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
             />
           </label>
+
           <button
             type="submit"
             class="tap w-full rounded-2xl bg-accent px-4 py-4 font-semibold text-onaccent"

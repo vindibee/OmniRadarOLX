@@ -31,6 +31,7 @@ from app.api.deps import (
 from app.api.schemas import (
     AccessOut,
     AdminUserOut,
+    CatalogOut,
     FilterIn,
     FilterOut,
     GrantIn,
@@ -112,6 +113,18 @@ async def set_language(user: CurrentUser, filters: Filters, body: LanguageIn) ->
 async def start_trial(user: CurrentUser, billing: Billing) -> AccessOut:
     await billing.activate_trial(user.id)  # TrialAlreadyUsedError → 400
     return AccessOut.from_domain(await billing.access(user.id))
+
+
+@router.get("/catalog")
+async def catalog(
+    user: CurrentUser, filters: Filters, marketplace: str | None = None
+) -> CatalogOut:
+    """Справочник площадки: области с городами и категории с подкатегориями.
+
+    Отсюда Mini App строит выпадающие списки — числовых id пользователь не видит.
+    """
+    code = marketplace or next(iter(filters.marketplaces())).code
+    return CatalogOut.model_validate(filters.catalog(code).to_json())
 
 
 # ---------- Фильтры и их история ----------
