@@ -23,6 +23,7 @@ class SqlAlchemyUserRepository:
                 "username": stmt.excluded.username,
                 "full_name": stmt.excluded.full_name,
                 "is_active": stmt.excluded.is_active,
+                # language_code намеренно не трогаем: его ставит только выбор пользователя.
             },
         )
         await self._session.execute(stmt)

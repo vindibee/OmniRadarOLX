@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from app.domain.entities import Filter, MarketplaceInfo, SearchCriteria, User
+from app.domain.entities import Filter, FoundListing, MarketplaceInfo, SearchCriteria, User
 from app.domain.errors import FilterLimitExceededError, FilterNotFoundError
 from app.services.interfaces import UnitOfWork, UnitOfWorkFactory
 from app.services.parsers.registry import ParserRegistry
@@ -26,11 +26,31 @@ class FilterService:
         return self._parsers.marketplaces()
 
     async def register_user(self, user_id: int, username: str | None, full_name: str) -> None:
+        """Язык здесь не трогаем: его выбирает сам пользователь на онбординге в Mini App."""
         async with self._uow_factory() as uow:
             await uow.users.upsert(User(id=user_id, username=username, full_name=full_name))
             await uow.commit()
 
-    async def create(self, user_id: int, marketplace: str, criteria: SearchCriteria) -> Filter:
+    async def get_user(self, user_id: int) -> User | None:
+        async with self._uow_factory() as uow:
+            return await uow.users.get(user_id)
+
+    async def set_language(self, user_id: int, language_code: str) -> None:
+        async with self._uow_factory() as uow:
+            await uow.users.set_language(user_id, language_code)
+            await uow.commit()
+
+    async def history(
+        self, user_id: int, filter_id: int, *, limit: int = 50, offset: int = 0
+    ) -> Sequence[FoundListing]:
+        """История находок фильтра. Чужой фильтр не отдаём — проверяем владельца."""
+        async with self._uow_factory() as uow:
+            await self._get_owned(uow, user_id, filter_id)
+            return await uow.deliveries.history(filter_id, limit=limit, offset=offset)
+
+    async def create(
+        self, user_id: int, marketplace: str, criteria: SearchCriteria, *, title: str | None = None
+    ) -> Filter:
         parser = self._parsers.get(marketplace)  # UnknownMarketplaceError, если площадки нет
         parser.validate_criteria(criteria)  # InvalidCriteriaError
 
@@ -40,7 +60,7 @@ class FilterService:
             search_filter = await uow.filters.add(
                 user_id=user_id,
                 marketplace=marketplace,
-                title=_make_title(criteria),
+                title=(title or "").strip()[:TITLE_MAX_LENGTH] or _make_title(criteria),
                 criteria=criteria,
             )
             await uow.commit()

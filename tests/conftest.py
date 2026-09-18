@@ -6,6 +6,7 @@ from datetime import datetime
 import asyncpg
 import pytest
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import DatabaseSettings
@@ -45,7 +46,10 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
     engine = create_engine(test_db)
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.drop_all)
+        # Пересоздаём схему целиком: так тесты не спотыкаются о таблицы,
+        # которые остались от прежних версий моделей.
+        await connection.execute(text("DROP SCHEMA public CASCADE"))
+        await connection.execute(text("CREATE SCHEMA public"))
         await connection.run_sync(Base.metadata.create_all)
     try:
         yield create_session_factory(engine)

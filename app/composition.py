@@ -9,11 +9,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.cache.redis import RedisCache
 from app.config import HttpSettings, Settings
 from app.database.session import create_engine, create_session_factory
+from app.payments.cryptobot import CryptoBotPayments
+from app.payments.stars import StarsPayments
 from app.repositories import SqlAlchemyUnitOfWork
 from app.services.billing import BillingOptions, BillingService
 from app.services.filters import FilterService
@@ -23,7 +28,6 @@ from app.services.parsers.cache import CacheOptions, CachingParser
 from app.services.parsers.http_client import HttpClient, HttpClientOptions
 from app.services.parsers.olx_ua import DEFAULT_HEADERS as OLX_HEADERS
 from app.services.parsers.olx_ua import OlxUaParser
-from app.services.presets import PresetService
 
 logger = logging.getLogger(__name__)
 
@@ -112,12 +116,25 @@ def build_billing_service(settings: Settings, uow_factory: UnitOfWorkFactory) ->
     )
 
 
-def build_preset_service(
-    settings: Settings,
-    uow_factory: UnitOfWorkFactory,
-    parsers: ParserRegistry,
-    filters: FilterService,
-) -> PresetService:
-    return PresetService(
-        uow_factory, parsers, filters, max_presets_per_user=settings.monitoring.max_presets_per_user
+def build_bot(settings: Settings) -> Bot:
+    return Bot(
+        token=settings.bot.token.get_secret_value(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+
+
+def build_stars_payments(bot: Bot) -> StarsPayments:
+    return StarsPayments(bot)
+
+
+def build_cryptobot_payments(settings: Settings) -> CryptoBotPayments | None:
+    """Без токена CryptoBot способ оплаты просто отсутствует — API отдаст 503."""
+    token = settings.billing.cryptobot_token
+    if token is None:
+        logger.info("CryptoBot не настроен (BILLING__CRYPTOBOT_TOKEN пуст)")
+        return None
+    return CryptoBotPayments(
+        token.get_secret_value(),
+        network=settings.billing.cryptobot_network,
+        asset=settings.billing.cryptobot_asset,
     )

@@ -15,10 +15,10 @@ from typing import Protocol, Self
 
 from app.domain.entities import (
     Filter,
+    FoundListing,
     Listing,
     PendingDelivery,
     SearchCriteria,
-    SearchPreset,
     Subscription,
     User,
 )
@@ -83,22 +83,6 @@ class SubscriptionRepository(Protocol):
     async def find_by_payment(self, provider: str, payment_id: str) -> Subscription | None: ...
 
 
-class PresetRepository(Protocol):
-    """Сохранённые формы поиска из Mini App."""
-
-    async def save(
-        self, *, user_id: int, name: str, marketplace: str, criteria: SearchCriteria
-    ) -> SearchPreset: ...
-
-    async def get_for_user(self, preset_id: int, user_id: int) -> SearchPreset | None: ...
-
-    async def list_for_user(self, user_id: int) -> Sequence[SearchPreset]: ...
-
-    async def count_for_user(self, user_id: int) -> int: ...
-
-    async def delete(self, preset_id: int, user_id: int) -> None: ...
-
-
 class ListingRepository(Protocol):
     async def upsert_many(self, listings: Sequence[Listing]) -> dict[tuple[str, str], int]:
         """Сохраняет объявления и возвращает ``(marketplace, external_id) -> id``."""
@@ -120,6 +104,12 @@ class DeliveryRepository(Protocol):
 
     async def register_failure(self, filter_id: int, listing_id: int) -> None: ...
 
+    async def history(
+        self, filter_id: int, *, limit: int = 50, offset: int = 0
+    ) -> Sequence[FoundListing]:
+        """История находок фильтра: новые сверху."""
+        ...
+
 
 class UnitOfWork(Protocol):
     """Единица работы: одна транзакция и доступ ко всем репозиториям."""
@@ -132,9 +122,6 @@ class UnitOfWork(Protocol):
 
     @property
     def subscriptions(self) -> SubscriptionRepository: ...
-
-    @property
-    def presets(self) -> PresetRepository: ...
 
     @property
     def listings(self) -> ListingRepository: ...

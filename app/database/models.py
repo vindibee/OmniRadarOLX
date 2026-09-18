@@ -94,22 +94,6 @@ class SubscriptionModel(TimestampMixin, Base):
     currency: Mapped[str | None] = mapped_column(String(8))
 
 
-class SearchPresetModel(TimestampMixin, Base):
-    """Сохранённая форма поиска из Mini App. Из пресета одним действием создаётся фильтр."""
-
-    __tablename__ = "search_presets"
-    __table_args__ = (UniqueConstraint("user_id", "name"),)
-
-    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    name: Mapped[str] = mapped_column(String(64))
-    marketplace: Mapped[str] = mapped_column(String(32))
-    # Тот же формат, что и в filters.criteria — пресет разворачивается в фильтр без конвертации.
-    criteria: Mapped[dict[str, Any]] = mapped_column(JSONB)
-
-
 class ListingModel(Base):
     """Объявление. Одно и то же объявление хранится один раз на площадку."""
 

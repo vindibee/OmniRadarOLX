@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.repositories.deliveries import SqlAlchemyDeliveryRepository
 from app.repositories.filters import SqlAlchemyFilterRepository
 from app.repositories.listings import SqlAlchemyListingRepository
-from app.repositories.presets import SqlAlchemyPresetRepository
 from app.repositories.subscriptions import SqlAlchemySubscriptionRepository
 from app.repositories.users import SqlAlchemyUserRepository
 
@@ -21,7 +20,6 @@ class SqlAlchemyUnitOfWork:
     users: SqlAlchemyUserRepository
     filters: SqlAlchemyFilterRepository
     subscriptions: SqlAlchemySubscriptionRepository
-    presets: SqlAlchemyPresetRepository
     listings: SqlAlchemyListingRepository
     deliveries: SqlAlchemyDeliveryRepository
 
@@ -34,7 +32,6 @@ class SqlAlchemyUnitOfWork:
         self.users = SqlAlchemyUserRepository(self._session)
         self.filters = SqlAlchemyFilterRepository(self._session)
         self.subscriptions = SqlAlchemySubscriptionRepository(self._session)
-        self.presets = SqlAlchemyPresetRepository(self._session)
         self.listings = SqlAlchemyListingRepository(self._session)
         self.deliveries = SqlAlchemyDeliveryRepository(self._session)
         return self

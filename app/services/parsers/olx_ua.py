@@ -28,7 +28,12 @@ DEFAULT_HEADERS = {
     "Referer": "https://www.olx.ua/",
 }
 # Дополнительные фильтры OLX, которые можно передать через SearchCriteria.extra.
-ALLOWED_EXTRA_PARAMS = frozenset({"category_id", "region_id", "city_id", "district_id", "distance"})
+ALLOWED_EXTRA_PARAMS = frozenset(
+    {"category_id", "region_id", "city_id", "district_id", "distance", "state"}
+)
+# Состояние товара OLX передаёт отдельным параметром-фильтром.
+STATE_PARAM = "filter_enum_state[0]"
+ALLOWED_STATES = frozenset({"new", "used"})
 IMAGE_SIZE = "800x600"
 
 
@@ -85,7 +90,9 @@ class OlxUaParser(MarketplaceParser):
         if criteria.price_max is not None:
             params["filter_float_price:to"] = _format_number(criteria.price_max)
         for key, value in criteria.extra.items():
-            if key in ALLOWED_EXTRA_PARAMS:
+            if key == "state":
+                params[STATE_PARAM] = value
+            elif key in ALLOWED_EXTRA_PARAMS:
                 params[key] = value
         return params
 
@@ -94,6 +101,9 @@ class OlxUaParser(MarketplaceParser):
         unknown = set(criteria.extra) - ALLOWED_EXTRA_PARAMS
         if unknown:
             raise InvalidCriteriaError(f"Неизвестные параметры OLX: {', '.join(sorted(unknown))}")
+        state = criteria.extra.get("state")
+        if state is not None and state not in ALLOWED_STATES:
+            raise InvalidCriteriaError("Состояние может быть только «new» или «used»")
 
     async def aclose(self) -> None:
         await self._http.aclose()

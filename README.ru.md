@@ -5,22 +5,24 @@
 Telegram-бот для мониторинга объявлений. Сейчас поддерживает OLX.ua; архитектура рассчитана на добавление
 других площадок (например, Gumtree Australia) без изменения ядра.
 
-**Стек:** Python 3.12 · aiogram 3 (бот) · FastAPI (API для Mini App) · curl_cffi (парсер) ·
-PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic · Redis (FSM + кэш выдачи) ·
-pydantic-settings · Docker Compose.
+Весь интерфейс — Telegram Mini App. Бот в чате только запускает приложение и присылает находки.
+
+**Стек:** Python 3.12 · aiogram 3 (бот) · FastAPI (API для Mini App) · HTML/JS + Tailwind
+(Mini App) · curl_cffi (парсер) · PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic ·
+Redis (кэш выдачи и FSM) · Telegram Stars и CryptoBot (оплата) · Docker Compose.
 
 ## Быстрый старт (Docker)
 
 ```bash
 cp .env.example .env         # впишите BOT__TOKEN и пароль БД
-docker compose up -d --build # db + redis → migrate (alembic upgrade head) → bot + api
+docker compose up -d --build # db + redis → migrate → bot + api + frontend
 docker compose logs -f bot api
 curl http://127.0.0.1:8080/api/health
 ```
 
-В Telegram откройте бота и нажмите «Начать» → «➕ Новый фильтр». Дальше всё управление —
-инлайн-кнопками: команды вводить не нужно, а под каждым присланным объявлением есть
-«🔗 Открыть объявление» и «🏠 Меню».
+Mini App открывается только по https, поэтому фронтенд ставится за reverse-proxy с сертификатом,
+адрес прописывается в `BOT__WEBAPP_URL` и в @BotFather. После этого `/start` в чате даёт кнопку
+«📱 Открыть приложение».
 
 ## Локальная разработка
 
@@ -41,10 +43,30 @@ ruff check app tests
 mypy app tests    # strict
 ```
 
+## Как это работает
+
+**В чате с ботом** — только две вещи:
+
+1. `/start` → короткое приветствие и одна inline-кнопка «📱 Открыть приложение» (`web_app`).
+   Она же появляется слева от поля ввода как Menu Button. Любое другое сообщение получает
+   тот же ответ: чат — не меню.
+2. Найденные объявления: карточка с ценой, местом, временем публикации и кнопками
+   «Открыть объявление» и «Мои фильтры».
+
+**В Mini App** — всё остальное:
+
+1. Первый запуск: выбор языка (українська / русский / English), короткий онбординг из трёх
+   шагов без терминов и кнопка «Активировать демо на 7 дней».
+2. Подписка: текущий статус и тарифы (день, неделя, месяц −10%, год −30%). Оплата
+   Telegram Stars (`WebApp.openInvoice`) или CryptoBot.
+3. Поиск: форма — запрос, цена от/до, состояние, город, категория, имя фильтра.
+4. Мои фильтры: список с паузой и удалением; по клику — история находок с датой и временем
+   публикации каждого объявления.
+
 ## Архитектура
 
 ```
-app/
+app/                        # Python: бот, Web API, парсер
 ├── main.py                 # точка входа бота: aiogram-диспетчер + фоновый воркер
 ├── composition.py          # общая сборка зависимостей для бота и API (DI, без синглтонов)
 ├── config.py               # pydantic-settings: BOT__*, DB__*, REDIS__*, CACHE__*, BILLING__*,
@@ -55,12 +77,15 @@ app/
 │   ├── deps.py             #   зависимости: текущий пользователь, сервисы из app.state
 │   ├── schemas.py          #   pydantic-контракт HTTP, отдельный от доменных сущностей
 │   └── main.py             #   create_app(): lifespan, CORS, роуты /api/*
-├── handlers/               # Presentation бота: aiogram-роутеры, FSM, клавиатуры
+├── handlers/               # Бот в чате: /start с кнопкой запуска и приём оплаты Stars
+│   ├── common.py           #   приветствие + единственная кнопка «Открыть приложение»
+│   ├── payments.py         #   pre_checkout + successful_payment → BillingService
+│   └── errors.py
+├── payments/               # Провайдеры оплаты: Telegram Stars и CryptoBot
 ├── services/               # Бизнес-логика, общая для бота и API
 │   ├── interfaces.py       #   порты: UnitOfWork, репозитории, Notifier, Cache (Protocol)
-│   ├── filters.py          #   фильтры поиска: лимиты, права
+│   ├── filters.py          #   фильтры, язык пользователя, история находок
 │   ├── billing.py          #   подписки: триал, продление, проверка доступа
-│   ├── presets.py          #   пресеты Mini App и разворачивание их в фильтр
 │   ├── monitoring.py       #   цикл: поиск → сохранение → дедупликация → доставка
 │   └── parsers/            #   MarketplaceParser, реестр, curl_cffi, OLX.ua, кэш выдачи
 ├── repositories/           # Data Access: SQLAlchemy-реализации портов + Unit of Work
@@ -68,6 +93,16 @@ app/
 ├── cache/                  # RedisCache — реализация порта Cache
 ├── notifications/          # TelegramNotifier — реализация порта Notifier
 └── workers/                # фоновый цикл мониторинга с graceful degradation
+
+frontend/                   # Mini App: статика, отдаётся nginx, он же проксирует /api
+├── index.html              #   разметка экранов + Telegram Web Apps API + Tailwind
+├── app.js                  #   состояние и отрисовка: онбординг, подписка, поиск, история
+├── i18n.js                 #   переводы uk / ru / en
+├── api.js                  #   клиент Web API: initData в заголовке каждого запроса
+├── nginx.conf              #   статика + proxy_pass /api → api:8080 (один origin, без CORS)
+└── Dockerfile
+
+tests/                      # pytest: парсер, кэш, биллинг, API, бот-точка входа
 ```
 
 Зависимости направлены внутрь: `handlers → services → domain` и `api → services → domain`.
@@ -118,17 +153,37 @@ app/
 - повторный вебхук провайдера не продлевает доступ дважды — уникальный
   `(payment_provider, payment_id)` плюс проверка в `BillingService.activate_paid`.
 
-### Mini App API
+### Mini App и Web API
 
-`GET /api/health`, `GET /api/me`, `POST /api/trial`, `GET|POST /api/presets`,
-`DELETE /api/presets/{id}`, `POST /api/presets/{id}/monitor`, `GET|POST /api/filters`,
-`DELETE /api/filters/{id}`.
+Фронтенд — статика (`frontend/`), которую отдаёт nginx; он же проксирует `/api` на контейнер
+`api`, поэтому браузер видит один origin и CORS не нужен. Наружу торчит только фронтенд —
+и его полагается закрывать reverse-proxy с HTTPS: Telegram открывает Mini App лишь по https
+и адрес нужно указать в `BOT__WEBAPP_URL` (и в @BotFather).
 
-Аутентификация — только по подписи Telegram `initData` (`Authorization: tma <initData>` или
-заголовок `X-Telegram-Init-Data`). Подпись проверяется HMAC-SHA256 по схеме Bot API, просроченная
-дольше 24 часов отклоняется. Ничему из `initData` до проверки подписи доверять нельзя: подменить
-в ней свой `id` на чужой — это одна строка в браузере. Создание фильтров требует активной подписки
-(`402`), доменные ошибки превращаются в `400` с текстом, который можно показать пользователю.
+Эндпоинты: `GET /api/health`, `GET /api/me`, `PUT /api/me/language`, `POST /api/trial`,
+`GET|POST /api/filters`, `POST /api/filters/{id}/toggle`, `DELETE /api/filters/{id}`,
+`GET /api/filters/{id}/items`, `POST /api/payments/stars`, `POST /api/payments/cryptobot`,
+`POST /api/payments/cryptobot/webhook`.
+
+Аутентификация — только подпись Telegram `initData` (`Authorization: tma <initData>` или
+заголовок `X-Telegram-Init-Data`). Подпись проверяется HMAC-SHA256 по схеме Bot API,
+просроченная дольше 24 часов отклоняется. Ничему из `initData` до проверки подписи доверять
+нельзя: подменить в ней свой `id` на чужой — одна строка в браузере. Свой `user_id` фронтенд
+не отправляет никогда — сервер берёт его из подписанных данных.
+
+### Оплата
+
+- **Telegram Stars.** Mini App просит у API ссылку на счёт, открывает её через
+  `WebApp.openInvoice`; бот отвечает на `pre_checkout_query` и по `successful_payment`
+  зачисляет период. Идентификатор платежа Telegram (`telegram_payment_charge_id`) сохраняется,
+  поэтому повторная доставка апдейта не продлевает подписку дважды.
+- **CryptoBot.** Счёт в USDT через Crypto Pay API, подтверждение — вебхуком на
+  `/api/payments/cryptobot/webhook` с проверкой подписи до разбора тела. Без
+  `BILLING__CRYPTOBOT_TOKEN` способ оплаты просто не показывается в приложении.
+
+Официальную обёртку `aiocryptopay` подключить не вышло: она закрепляет `certifi<2024` и старый
+`pydantic`, что несовместимо с curl_cffi и aiogram 3.15+. Crypto Pay API — несколько POST-запросов,
+поэтому клиент написан на aiohttp напрямую (`app/payments/cryptobot.py`).
 
 ### Кэш выдачи (Redis)
 
@@ -197,7 +252,9 @@ app/
   а не пустая выдача. Но изменение семантики отдельного поля тестами не ловится.
 - Один экземпляр бота: Redis-хранилище FSM к нескольким репликам готово, но воркер мониторинга
   не разделяет фильтры между процессами — при нескольких репликах объявления будут искаться дважды.
-- Не реализовано (следующие шаги): мультиязычность (`locales/` + aiogram-i18n) и выбор языка
-  на онбординге, приём платежей Telegram Stars и CryptoBot (`BillingService.activate_paid`
-  ждёт вызова от провайдера), middleware проверки подписки в боте, фронтенд Mini App
-  и эндпоинт истории найденных объявлений.
+- Город и категория в форме поиска вводятся числовыми ID из ссылки OLX: нормальные выпадающие
+  списки требуют справочника регионов и дерева категорий OLX — это следующий шаг.
+- CryptoBot написан по документации Crypto Pay API, но без реального токена не проверялся:
+  протестированы только проверка подписи вебхука и разбор его тела.
+- Переводы лежат в `frontend/i18n.js` и покрывают интерфейс Mini App. Тексты самого бота
+  (приветствие, сообщение об оплате) пока только на русском — их стоит перевести тоже.

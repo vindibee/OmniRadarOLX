@@ -1,7 +1,8 @@
 """Зависимости FastAPI: общие с ботом сервисы + аутентификация Mini App.
 
-Ресурсы (engine, сервисы) живут в ``app.state`` и создаются один раз при старте приложения —
-см. ``app.api.main.create_app``. Здесь только их извлечение и проверка пользователя.
+Ресурсы (engine, сервисы, провайдеры оплаты) создаются один раз при старте приложения
+и живут в ``app.state`` — см. ``app.api.main.create_app``. Здесь только их извлечение
+и проверка личности пользователя.
 """
 
 from __future__ import annotations
@@ -13,10 +14,10 @@ from fastapi import Depends, Header, HTTPException, Request, status
 
 from app.api.security import InitDataError, WebAppUser, parse_init_data
 from app.config import Settings
+from app.payments.cryptobot import CryptoBotPayments
+from app.payments.stars import StarsPayments
 from app.services.billing import BillingService
 from app.services.filters import FilterService
-from app.services.interfaces import UnitOfWorkFactory
-from app.services.presets import PresetService
 
 INIT_DATA_MAX_AGE = timedelta(hours=24)
 
@@ -24,11 +25,6 @@ INIT_DATA_MAX_AGE = timedelta(hours=24)
 def get_settings(request: Request) -> Settings:
     settings: Settings = request.app.state.settings
     return settings
-
-
-def get_uow_factory(request: Request) -> UnitOfWorkFactory:
-    factory: UnitOfWorkFactory = request.app.state.uow_factory
-    return factory
 
 
 def get_billing(request: Request) -> BillingService:
@@ -41,9 +37,19 @@ def get_filters(request: Request) -> FilterService:
     return filters
 
 
-def get_presets(request: Request) -> PresetService:
-    presets: PresetService = request.app.state.presets
-    return presets
+def get_stars(request: Request) -> StarsPayments:
+    stars: StarsPayments = request.app.state.stars
+    return stars
+
+
+def get_cryptobot(request: Request) -> CryptoBotPayments:
+    cryptobot: CryptoBotPayments | None = request.app.state.cryptobot
+    if cryptobot is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Оплата криптовалютой не подключена",
+        )
+    return cryptobot
 
 
 async def get_current_user(
@@ -75,7 +81,8 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[WebAppUser, Depends(get_current_user)]
+AppSettings = Annotated[Settings, Depends(get_settings)]
 Billing = Annotated[BillingService, Depends(get_billing)]
 Filters = Annotated[FilterService, Depends(get_filters)]
-Presets = Annotated[PresetService, Depends(get_presets)]
-UowFactory = Annotated[UnitOfWorkFactory, Depends(get_uow_factory)]
+Stars = Annotated[StarsPayments, Depends(get_stars)]
+CryptoBot = Annotated[CryptoBotPayments, Depends(get_cryptobot)]

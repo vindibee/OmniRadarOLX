@@ -8,16 +8,16 @@ import logging
 from contextlib import suppress
 from datetime import timedelta
 
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import Dispatcher
 from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, MenuButtonCommands
 
 from app.composition import (
+    build_billing_service,
+    build_bot,
     build_cache,
     build_engine,
     build_filter_service,
@@ -26,6 +26,7 @@ from app.composition import (
 )
 from app.config import BotSettings, Settings
 from app.handlers import create_root_router
+from app.handlers.common import menu_button
 from app.notifications.telegram import TelegramNotifier
 from app.services.monitoring import MonitoringOptions, MonitoringService
 from app.workers.monitor import MonitoringWorker
@@ -45,16 +46,14 @@ async def run(settings: Settings) -> None:
     uow_factory = build_uow_factory(engine)
     cache = build_cache(settings)
     parsers = build_parser_registry(settings, cache)
-    bot = Bot(
-        token=settings.bot.token.get_secret_value(),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = build_bot(settings)
 
     filter_service = build_filter_service(settings, uow_factory, parsers)
+    billing_service = build_billing_service(settings, uow_factory)
     monitoring_service = MonitoringService(
         uow_factory,
         parsers,
-        TelegramNotifier(bot),
+        TelegramNotifier(bot, webapp_url=settings.bot.webapp_url),
         MonitoringOptions(
             concurrency=settings.monitoring.concurrency,
             publish_grace=timedelta(minutes=settings.monitoring.publish_grace_minutes),
@@ -67,8 +66,12 @@ async def run(settings: Settings) -> None:
     )
 
     # Dependency Injection aiogram: всё, что передано в Dispatcher, доступно хендлерам по имени.
+    # DI aiogram: хендлеры получают это по именам параметров.
     dispatcher = Dispatcher(
-        storage=create_storage(settings.bot, settings.redis.url), filter_service=filter_service
+        storage=create_storage(settings.bot, settings.redis.url),
+        filter_service=filter_service,
+        billing=billing_service,
+        bot_settings=settings.bot,
     )
     dispatcher.include_router(create_root_router())
 
@@ -79,15 +82,18 @@ async def run(settings: Settings) -> None:
         nonlocal monitor_task
         try:
             await bot.set_my_commands(
-                [
-                    BotCommand(command="start", description="Главное меню"),
-                    BotCommand(command="filters", description="Мои фильтры"),
-                    BotCommand(command="help", description="Помощь"),
-                    BotCommand(command="cancel", description="Отменить ввод"),
-                ]
+                [BotCommand(command="start", description="Открыть приложение")]
             )
-        except TelegramAPIError as exc:  # меню команд — косметика, запуск не блокирует
-            logger.warning("Не удалось установить команды бота: %s", exc)
+            # Кнопка слева от поля ввода: второй вход в Mini App.
+            await bot.set_chat_menu_button(
+                menu_button=(
+                    menu_button(settings.bot.webapp_url)
+                    if settings.bot.webapp_url
+                    else MenuButtonCommands()
+                )
+            )
+        except TelegramAPIError as exc:  # кнопка и команды — косметика, запуск не блокируют
+            logger.warning("Не удалось настроить меню бота: %s", exc)
         monitor_task = asyncio.create_task(worker.run(stop_event), name="monitoring")
 
     async def on_shutdown() -> None:
@@ -105,9 +111,9 @@ async def run(settings: Settings) -> None:
 
     try:
         logger.info(
-            "Бот запускается, площадки: %s, FSM: %s",
+            "Бот запускается, площадки: %s, Mini App: %s",
             ", ".join(parsers.codes),
-            settings.bot.fsm_storage,
+            settings.bot.webapp_url or "не настроен",
         )
         await dispatcher.start_polling(bot)
     finally:

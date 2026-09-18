@@ -1,80 +1,75 @@
-from aiogram import F, Router
-from aiogram.filters import Command, CommandStart, StateFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+"""Единственный экран бота в чате: приветствие и кнопка запуска Mini App.
 
-from app.handlers import keyboards
-from app.handlers.callbacks import MenuAction, MenuCallback
+Всё управление живёт в Mini App. Здесь намеренно нет ни FSM, ни меню из кнопок:
+чат нужен, чтобы открыть приложение и получать уведомления о находках.
+"""
+
+import logging
+
+from aiogram import Router
+from aiogram.filters import CommandStart
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MenuButtonWebApp,
+    Message,
+    WebAppInfo,
+)
+
+from app.config import BotSettings
 from app.services.filters import FilterService
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="common")
 
 WELCOME_TEXT = (
-    "👋 Привет! Я слежу за новыми объявлениями и присылаю их сюда.\n\n"
-    "Создайте фильтр — и я сообщу, как только появится подходящее предложение."
+    "👋 Привет! Я слежу за объявлениями и пришлю сюда каждое новое, "
+    "как только оно появится.\n\n"
+    "Всё остальное — в приложении: язык, поиск, подписка."
 )
-HELP_TEXT = (
-    "<b>Как это работает</b>\n"
-    "1. Нажмите «➕ Новый фильтр», выберите площадку и введите запрос.\n"
-    "2. При желании укажите диапазон цен.\n"
-    "3. Бот регулярно проверяет площадку и присылает только новые объявления.\n\n"
-    "Всё управление — кнопками. Команды /start, /filters и /cancel делают то же самое,"
-    " если удобнее с клавиатуры."
+NO_WEBAPP_TEXT = (
+    "⚙️ Приложение ещё не подключено. Загляните позже — или сообщите администратору, "
+    "что не задан BOT__WEBAPP_URL."
 )
+OPEN_APP_BUTTON = "📱 Открыть приложение"
 
 
-async def show(callback: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> None:
-    """Показывает экран в ответ на нажатие кнопки.
+def open_app_keyboard(webapp_url: str, text: str = OPEN_APP_BUTTON) -> InlineKeyboardMarkup:
+    """Одна кнопка — вход в Mini App. Других кнопок в чате нет."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=text, web_app=WebAppInfo(url=webapp_url))]]
+    )
 
-    Сообщение с фото (уведомление об объявлении) отредактировать как текст нельзя,
-    поэтому для него отправляем новое сообщение — кнопка «🏠 Меню» работает везде.
-    """
-    message = callback.message
-    if not isinstance(message, Message):
+
+def menu_button(webapp_url: str) -> MenuButtonWebApp:
+    """Кнопка слева от поля ввода — второй вход в приложение, всегда под рукой."""
+    return MenuButtonWebApp(text="Приложение", web_app=WebAppInfo(url=webapp_url))
+
+
+async def _greet(message: Message, bot_settings: BotSettings) -> None:
+    if not bot_settings.webapp_url:
+        # Telegram принимает в web_app только https — без адреса кнопку создать нельзя.
+        logger.warning("BOT__WEBAPP_URL не задан: кнопка запуска Mini App недоступна")
+        await message.answer(NO_WEBAPP_TEXT)
         return
-    if message.text is None:
-        await message.answer(text, reply_markup=markup)
-    else:
-        await message.edit_text(text, reply_markup=markup)
+    await message.answer(WELCOME_TEXT, reply_markup=open_app_keyboard(bot_settings.webapp_url))
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, filter_service: FilterService) -> None:
-    await state.clear()
+async def cmd_start(
+    message: Message, bot_settings: BotSettings, filter_service: FilterService
+) -> None:
     if message.from_user:
         await filter_service.register_user(
             user_id=message.from_user.id,
             username=message.from_user.username,
             full_name=message.from_user.full_name,
         )
-    await message.answer(WELCOME_TEXT, reply_markup=keyboards.main_menu())
+    await _greet(message, bot_settings)
 
 
-@router.message(Command("help"))
-async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT, reply_markup=keyboards.back_to_menu())
-
-
-@router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer("Действие отменено.", reply_markup=keyboards.main_menu())
-
-
-@router.callback_query(MenuCallback.filter(F.action == MenuAction.MAIN))
-async def on_main_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    await show(callback, WELCOME_TEXT, keyboards.main_menu())
-    await callback.answer()
-
-
-@router.callback_query(MenuCallback.filter(F.action == MenuAction.HELP))
-async def on_help(callback: CallbackQuery) -> None:
-    await show(callback, HELP_TEXT, keyboards.back_to_menu())
-    await callback.answer()
-
-
-@router.message(StateFilter(None))
-async def fallback(message: Message) -> None:
-    """Любое сообщение вне сценария — это просьба показать меню, а не ошибка пользователя."""
-    await message.answer(WELCOME_TEXT, reply_markup=keyboards.main_menu())
+@router.message()
+async def anything_else(message: Message, bot_settings: BotSettings) -> None:
+    """Любое сообщение — просьба открыть приложение, а не повод учить команды."""
+    await _greet(message, bot_settings)

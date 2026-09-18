@@ -12,11 +12,15 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from aiogram.types import InlineKeyboardMarkup, LinkPreviewOptions
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LinkPreviewOptions,
+    WebAppInfo,
+)
 
 from app.domain.entities import Filter, Listing
 from app.domain.errors import NotificationError, RecipientUnavailableError
-from app.handlers import keyboards
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +29,15 @@ MAX_RETRY_AFTER_SECONDS = 60
 
 
 class TelegramNotifier:
-    def __init__(self, bot: Bot) -> None:
+    """Единственная задача бота, кроме запуска Mini App: доставить находку в чат."""
+
+    def __init__(self, bot: Bot, *, webapp_url: str | None = None) -> None:
         self._bot = bot
+        self._webapp_url = webapp_url
 
     async def send_listing(self, chat_id: int, search_filter: Filter, listing: Listing) -> None:
         text = format_listing(search_filter, listing)
-        markup = keyboards.listing_actions(listing.url)
+        markup = listing_keyboard(listing.url, self._webapp_url)
         try:
             await self._send(chat_id, text, listing.image_url, markup)
         except TelegramRetryAfter as exc:
@@ -76,6 +83,16 @@ class TelegramNotifier:
             reply_markup=markup,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
+
+
+def listing_keyboard(listing_url: str, webapp_url: str | None) -> InlineKeyboardMarkup:
+    """Ссылка на объявление и вход в приложение — больше кнопок в чате нет."""
+    rows = [[InlineKeyboardButton(text="🔗 Открыть объявление", url=listing_url)]]
+    if webapp_url:
+        rows.append(
+            [InlineKeyboardButton(text="📱 Мои фильтры", web_app=WebAppInfo(url=webapp_url))]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def format_listing(search_filter: Filter, listing: Listing) -> str:

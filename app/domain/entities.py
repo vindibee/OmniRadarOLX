@@ -106,15 +106,12 @@ class Access:
 
 
 @dataclass(frozen=True, slots=True)
-class SearchPreset:
-    """Сохранённая форма поиска. Разворачивается в фильтр без конвертации."""
+class FoundListing:
+    """Строка истории: объявление, когда оно опубликовано и когда мы его нашли."""
 
-    id: int
-    user_id: int
-    name: str
-    marketplace: str
-    criteria: SearchCriteria
-    created_at: datetime
+    listing: Listing
+    found_at: datetime
+    sent_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)

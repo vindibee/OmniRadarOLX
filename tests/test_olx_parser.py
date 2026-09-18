@@ -185,3 +185,17 @@ def test_parse_offers_rejects_response_it_cannot_parse_at_all() -> None:
     """Смена формата API — это ошибка, а не «пустая выдача»: иначе бот тихо перестанет работать."""
     with pytest.raises(ParserResponseError, match="формат"):
         parse_offers({"data": [{"id": 1}, {"id": 2}]})
+
+
+def test_condition_from_the_form_becomes_an_olx_filter() -> None:
+    criteria = SearchCriteria(query="iphone", extra={"state": "used", "city_id": 268})
+
+    params = _parser().build_params(criteria)
+
+    assert params["filter_enum_state[0]"] == "used"
+    assert params["city_id"] == 268
+
+
+def test_unknown_condition_is_rejected_before_it_reaches_olx() -> None:
+    with pytest.raises(InvalidCriteriaError):
+        _parser().validate_criteria(SearchCriteria(query="iphone", extra={"state": "broken"}))

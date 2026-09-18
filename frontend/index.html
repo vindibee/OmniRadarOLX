@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>OmniRadar</title>
+
+    <!-- Telegram Web Apps API: даёт initData, тему и системные кнопки. Только с этого адреса. -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              // Цвета берём из темы клиента: приложение выглядит родным и в светлой, и в тёмной.
+              bg: "var(--tg-theme-bg-color, #ffffff)",
+              card: "var(--tg-theme-secondary-bg-color, #f1f1f4)",
+              ink: "var(--tg-theme-text-color, #000000)",
+              muted: "var(--tg-theme-hint-color, #707579)",
+              link: "var(--tg-theme-link-color, #2481cc)",
+              accent: "var(--tg-theme-button-color, #2481cc)",
+              onaccent: "var(--tg-theme-button-text-color, #ffffff)",
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      body {
+        background: var(--tg-theme-bg-color, #fff);
+        color: var(--tg-theme-text-color, #000);
+        -webkit-tap-highlight-color: transparent;
+      }
+      input,
+      select {
+        color-scheme: light dark;
+      }
+      .tap:active {
+        transform: scale(0.99);
+      }
+    </style>
+  </head>
+
+  <body class="min-h-screen antialiased">
+    <!-- Загрузка -->
+    <div id="screen-loading" class="flex h-screen items-center justify-center">
+      <div class="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-transparent"></div>
+    </div>
+
+    <!-- Онбординг: язык -->
+    <section id="screen-language" class="hidden px-5 py-10">
+      <h1 class="text-2xl font-semibold">🌐 Мова / Язык / Language</h1>
+      <p class="mt-2 text-muted" data-i18n="language.hint"></p>
+      <div id="language-list" class="mt-6 space-y-3"></div>
+    </section>
+
+    <!-- Онбординг: как это работает -->
+    <section id="screen-onboarding" class="hidden px-5 py-10">
+      <h1 class="text-2xl font-semibold" data-i18n="onboarding.title"></h1>
+      <ol id="onboarding-steps" class="mt-6 space-y-4"></ol>
+      <button
+        id="trial-button"
+        class="tap mt-8 w-full rounded-2xl bg-accent px-4 py-4 text-base font-semibold text-onaccent"
+        data-i18n="onboarding.trial"
+      ></button>
+      <button
+        id="skip-onboarding"
+        class="tap mt-3 w-full rounded-2xl px-4 py-3 text-sm text-muted"
+        data-i18n="onboarding.skip"
+      ></button>
+    </section>
+
+    <!-- Главный экран -->
+    <main id="screen-main" class="hidden pb-24">
+      <!-- Подписка -->
+      <section id="tab-subscription" class="px-5 py-6">
+        <div id="access-card" class="rounded-2xl bg-card p-4"></div>
+        <h2 class="mt-7 text-lg font-semibold" data-i18n="subscription.tariffs"></h2>
+        <div id="tariff-list" class="mt-3 space-y-3"></div>
+      </section>
+
+      <!-- Настройка поиска -->
+      <section id="tab-search" class="hidden px-5 py-6">
+        <h2 class="text-lg font-semibold" data-i18n="search.title"></h2>
+        <form id="search-form" class="mt-4 space-y-4">
+          <label class="block">
+            <span class="text-sm text-muted" data-i18n="search.query"></span>
+            <input
+              name="query"
+              required
+              maxlength="100"
+              class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              placeholder="iPhone 13"
+            />
+          </label>
+          <div class="flex gap-3">
+            <label class="block flex-1">
+              <span class="text-sm text-muted" data-i18n="search.priceMin"></span>
+              <input
+                name="price_min"
+                type="number"
+                min="0"
+                inputmode="numeric"
+                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              />
+            </label>
+            <label class="block flex-1">
+              <span class="text-sm text-muted" data-i18n="search.priceMax"></span>
+              <input
+                name="price_max"
+                type="number"
+                min="0"
+                inputmode="numeric"
+                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              />
+            </label>
+          </div>
+          <label class="block">
+            <span class="text-sm text-muted" data-i18n="search.state"></span>
+            <select name="state" class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none">
+              <option value="" data-i18n="search.stateAny"></option>
+              <option value="new" data-i18n="search.stateNew"></option>
+              <option value="used" data-i18n="search.stateUsed"></option>
+            </select>
+          </label>
+          <div class="flex gap-3">
+            <label class="block flex-1">
+              <span class="text-sm text-muted" data-i18n="search.city"></span>
+              <input
+                name="city_id"
+                type="number"
+                inputmode="numeric"
+                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              />
+            </label>
+            <label class="block flex-1">
+              <span class="text-sm text-muted" data-i18n="search.category"></span>
+              <input
+                name="category_id"
+                type="number"
+                inputmode="numeric"
+                class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+              />
+            </label>
+          </div>
+          <p class="text-xs text-muted" data-i18n="search.idsHint"></p>
+          <label class="block">
+            <span class="text-sm text-muted" data-i18n="search.name"></span>
+            <input
+              name="name"
+              maxlength="64"
+              class="mt-1 w-full rounded-xl bg-card px-4 py-3 outline-none"
+            />
+          </label>
+          <button
+            type="submit"
+            class="tap w-full rounded-2xl bg-accent px-4 py-4 font-semibold text-onaccent"
+            data-i18n="search.save"
+          ></button>
+        </form>
+      </section>
+
+      <!-- Мои фильтры -->
+      <section id="tab-filters" class="hidden px-5 py-6">
+        <h2 class="text-lg font-semibold" data-i18n="filters.title"></h2>
+        <div id="filter-list" class="mt-4 space-y-3"></div>
+      </section>
+
+      <!-- История одного фильтра -->
+      <section id="tab-history" class="hidden px-5 py-6">
+        <button id="history-back" class="tap mb-4 text-sm text-link" data-i18n="history.back"></button>
+        <h2 id="history-title" class="text-lg font-semibold"></h2>
+        <div id="history-list" class="mt-4 space-y-3"></div>
+      </section>
+
+      <!-- Нижняя навигация -->
+      <nav
+        class="fixed inset-x-0 bottom-0 grid grid-cols-3 border-t border-black/5 bg-bg pb-[env(safe-area-inset-bottom)] text-center text-xs"
+      >
+        <button data-tab="subscription" class="tap py-3">
+          <div class="text-lg">💳</div>
+          <span data-i18n="nav.subscription"></span>
+        </button>
+        <button data-tab="search" class="tap py-3">
+          <div class="text-lg">🔎</div>
+          <span data-i18n="nav.search"></span>
+        </button>
+        <button data-tab="filters" class="tap py-3">
+          <div class="text-lg">📋</div>
+          <span data-i18n="nav.filters"></span>
+        </button>
+      </nav>
+    </main>
+
+    <div
+      id="toast"
+      class="pointer-events-none fixed inset-x-4 bottom-24 hidden rounded-xl bg-black/80 px-4 py-3 text-center text-sm text-white"
+    ></div>
+
+    <script src="./i18n.js"></script>
+    <script src="./api.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

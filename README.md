@@ -6,21 +6,25 @@ A Telegram bot that watches marketplace listings and pushes new ones to you. OLX
 the architecture is built so that another marketplace (Gumtree Australia, for example) can be added
 without touching the core.
 
-**Stack:** Python 3.12 · aiogram 3 (bot) · FastAPI (Mini App API) · curl_cffi (scraping) ·
-PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic · Redis (FSM + search cache) ·
-pydantic-settings · Docker Compose.
+The whole interface is a Telegram Mini App. In the chat the bot only launches the app and
+delivers what it finds.
+
+**Stack:** Python 3.12 · aiogram 3 (bot) · FastAPI (Mini App API) · HTML/JS + Tailwind (Mini App) ·
+curl_cffi (scraping) · PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic · Redis (search cache
+and FSM) · Telegram Stars and CryptoBot (payments) · Docker Compose.
 
 ## Quick start (Docker)
 
 ```bash
 cp .env.example .env         # fill in BOT__TOKEN and the database password
-docker compose up -d --build # db + redis → migrate (alembic upgrade head) → bot + api
+docker compose up -d --build # db + redis → migrate → bot + api + frontend
 docker compose logs -f bot api
 curl http://127.0.0.1:8080/api/health
 ```
 
-Open the bot in Telegram and press "Start" → "➕ New filter". Everything else is inline buttons:
-no commands to type, and every listing the bot sends carries "🔗 Open listing" and "🏠 Menu".
+A Mini App opens over https only, so the frontend goes behind a reverse proxy with a certificate;
+put that address into `BOT__WEBAPP_URL` and into @BotFather. After that, `/start` in the chat hands
+the user a "📱 Open the app" button.
 
 ## Local development
 
@@ -41,10 +45,30 @@ ruff check app tests
 mypy app tests    # strict
 ```
 
+## How it works
+
+**In the chat** the bot does exactly two things:
+
+1. `/start` → a short greeting and one inline button, "📱 Open the app" (`web_app`). The same
+   entry point appears as the Menu Button next to the input field. Any other message gets the
+   same reply: the chat is not a menu.
+2. Delivers finds: a card with price, location, publication time and buttons for the listing
+   itself and for the app.
+
+**Everything else lives in the Mini App:**
+
+1. First launch: language choice (українська / русский / English), a three-step plain-language
+   onboarding, and an "Activate the 7-day demo" button.
+2. Plan: current status and tariffs (day, week, month −10%, year −30%), paid with Telegram Stars
+   (`WebApp.openInvoice`) or CryptoBot.
+3. Search: a form — query, price from/to, condition, city, category, filter name.
+4. My filters: a list with pause and delete; tapping one opens the history of everything it has
+   found, with the publication date and time of each listing.
+
 ## Architecture
 
 ```
-app/
+app/                        # Python: bot, Web API, scraper
 ├── main.py                 # bot entry point: aiogram dispatcher + background worker
 ├── composition.py          # dependency wiring shared by the bot and the API (DI, no singletons)
 ├── config.py               # pydantic-settings: BOT__*, DB__*, REDIS__*, CACHE__*, BILLING__*,
@@ -55,12 +79,15 @@ app/
 │   ├── deps.py             #   dependencies: current user, services from app.state
 │   ├── schemas.py          #   pydantic HTTP contract, separate from domain entities
 │   └── main.py             #   create_app(): lifespan, CORS, /api/* routes
-├── handlers/               # Bot presentation: aiogram routers, FSM, keyboards
+├── handlers/               # The bot in chat: /start with the launch button, Stars payments
+│   ├── common.py           #   greeting + the single "Open the app" button
+│   ├── payments.py         #   pre_checkout + successful_payment → BillingService
+│   └── errors.py
+├── payments/               # Payment providers: Telegram Stars and CryptoBot
 ├── services/               # Business logic shared by the bot and the API
 │   ├── interfaces.py       #   ports: UnitOfWork, repositories, Notifier, Cache (Protocol)
-│   ├── filters.py          #   search filters: limits, ownership
+│   ├── filters.py          #   filters, user language, history of finds
 │   ├── billing.py          #   subscriptions: trial, renewal, access check
-│   ├── presets.py          #   Mini App presets and turning one into a filter
 │   ├── monitoring.py       #   the cycle: search → store → deduplicate → deliver
 │   └── parsers/            #   MarketplaceParser contract, registry, curl_cffi, OLX.ua, cache
 ├── repositories/           # Data access: SQLAlchemy implementations of the ports + Unit of Work
@@ -68,6 +95,16 @@ app/
 ├── cache/                  # RedisCache — implements the Cache port
 ├── notifications/          # TelegramNotifier — implements the Notifier port
 └── workers/                # background monitoring loop with graceful degradation
+
+frontend/                   # Mini App: static files served by nginx, which also proxies /api
+├── index.html              #   screen markup + Telegram Web Apps API + Tailwind
+├── app.js                  #   state and rendering: onboarding, plan, search, history
+├── i18n.js                 #   uk / ru / en translations
+├── api.js                  #   Web API client: initData header on every request
+├── nginx.conf              #   static + proxy_pass /api → api:8080 (one origin, no CORS)
+└── Dockerfile
+
+tests/                      # pytest: parser, cache, billing, API, bot entry point
 ```
 
 Dependencies point inward: `handlers → services → domain` and `api → services → domain`.
@@ -118,17 +155,37 @@ Two invariants are held by the database rather than by code:
 - a repeated provider webhook cannot extend access twice — a unique `(payment_provider, payment_id)`
   plus the check in `BillingService.activate_paid`.
 
-### Mini App API
+### Mini App and Web API
 
-`GET /api/health`, `GET /api/me`, `POST /api/trial`, `GET|POST /api/presets`,
-`DELETE /api/presets/{id}`, `POST /api/presets/{id}/monitor`, `GET|POST /api/filters`,
-`DELETE /api/filters/{id}`.
+The frontend is static (`frontend/`) served by nginx, which also proxies `/api` to the `api`
+container — so the browser sees a single origin and CORS is not involved. Only the frontend is
+exposed, and it belongs behind an HTTPS reverse proxy: Telegram opens a Mini App over https only,
+and that address goes into `BOT__WEBAPP_URL` (and into @BotFather).
+
+Endpoints: `GET /api/health`, `GET /api/me`, `PUT /api/me/language`, `POST /api/trial`,
+`GET|POST /api/filters`, `POST /api/filters/{id}/toggle`, `DELETE /api/filters/{id}`,
+`GET /api/filters/{id}/items`, `POST /api/payments/stars`, `POST /api/payments/cryptobot`,
+`POST /api/payments/cryptobot/webhook`.
 
 Authentication is the Telegram `initData` signature and nothing else (`Authorization: tma <initData>`
-or the `X-Telegram-Init-Data` header). The signature is verified with HMAC-SHA256 as specified by the
-Bot API, and anything older than 24 hours is rejected. Nothing inside `initData` may be trusted before
-that check: swapping your own `id` for someone else's is a one-line edit in a browser. Creating filters
-requires an active subscription (`402`); domain errors become `400` with a message safe to show a user.
+or the `X-Telegram-Init-Data` header). The signature is verified with HMAC-SHA256 as specified by
+the Bot API, and anything older than 24 hours is rejected. Nothing inside `initData` may be trusted
+before that check: swapping your own `id` for someone else's is a one-line edit in a browser. The
+frontend never sends its own `user_id` — the server takes it from the signed data.
+
+### Payments
+
+- **Telegram Stars.** The Mini App asks the API for an invoice link and opens it via
+  `WebApp.openInvoice`; the bot answers `pre_checkout_query` and credits the period on
+  `successful_payment`. Telegram's `telegram_payment_charge_id` is stored, so a redelivered update
+  cannot extend the subscription twice.
+- **CryptoBot.** A USDT invoice through the Crypto Pay API, confirmed by a webhook at
+  `/api/payments/cryptobot/webhook` whose signature is checked before the body is parsed. Without
+  `BILLING__CRYPTOBOT_TOKEN` the method simply is not offered in the app.
+
+The official `aiocryptopay` wrapper could not be used: it pins `certifi<2024` and an old `pydantic`,
+which conflicts with curl_cffi and aiogram 3.15+. Crypto Pay API is a handful of POST requests, so
+the client is written directly on aiohttp (`app/payments/cryptobot.py`).
 
 ### Search cache (Redis)
 
@@ -200,7 +257,9 @@ parameters (city, category) travel in `SearchCriteria.extra` and are stored as J
   is not something the tests can catch.
 - Single instance: the Redis FSM storage is ready for several replicas, but the monitoring worker does
   not split filters across processes — with more than one replica the same searches would run twice.
-- Not implemented yet (next steps): localization (`locales/` + aiogram-i18n) and the language choice
-  during onboarding, Telegram Stars and CryptoBot payment intake (`BillingService.activate_paid` is
-  waiting for a provider to call it), the bot-side subscription middleware, the Mini App frontend,
-  and a history endpoint for listings already found.
+- City and category in the search form are numeric IDs copied from an OLX link: proper dropdowns
+  need OLX's region list and category tree, which is the next step.
+- CryptoBot is written against the Crypto Pay API docs but has never run against a real token:
+  only the webhook signature check and body parsing are covered by tests.
+- Translations live in `frontend/i18n.js` and cover the Mini App. The bot's own texts (greeting,
+  payment confirmation) are still Russian only and deserve the same treatment.

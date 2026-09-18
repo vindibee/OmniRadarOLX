@@ -77,6 +77,10 @@ class BillingSettings(BaseModel):
 
     day_price_stars: int = Field(default=25, ge=1)
     day_price_usd: Decimal = Field(default=Decimal("0.50"), gt=0)
+    # CryptoBot: без токена этот способ оплаты просто не предлагается.
+    cryptobot_token: SecretStr | None = None
+    cryptobot_network: Literal["mainnet", "testnet"] = "mainnet"
+    cryptobot_asset: str = "USDT"
 
 
 class ApiSettings(BaseModel):
@@ -86,6 +90,8 @@ class ApiSettings(BaseModel):
     port: int = 8080
     # Источники, которым разрешён доступ к API из браузера (страница Mini App).
     cors_origins: list[str] = ["https://web.telegram.org"]
+    # Сколько строк истории отдавать за один запрос.
+    history_page_size: int = Field(default=50, ge=1, le=200)
 
 
 class ParserSettings(BaseModel):

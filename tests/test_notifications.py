@@ -1,13 +1,12 @@
-"""Уведомление — точка входа в бота: из него можно открыть объявление и вернуться в меню."""
+"""Уведомление — единственное, что бот делает в чате, кроме запуска приложения."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.domain.entities import Filter, Listing, SearchCriteria
-from app.handlers import keyboards
-from app.handlers.callbacks import MenuAction, MenuCallback
-from app.notifications.telegram import format_listing
+from app.notifications.telegram import format_listing, listing_keyboard
 
+WEBAPP_URL = "https://app.example.com"
 LISTING = Listing(
     marketplace="olx_ua",
     external_id="1",
@@ -29,13 +28,17 @@ FILTER = Filter(
 )
 
 
-def test_listing_keyboard_opens_listing_and_returns_to_menu() -> None:
-    buttons = [
-        button for row in keyboards.listing_actions(LISTING.url).inline_keyboard for button in row
-    ]
+def test_keyboard_opens_listing_and_the_app() -> None:
+    buttons = [b for row in listing_keyboard(LISTING.url, WEBAPP_URL).inline_keyboard for b in row]
 
-    assert [button.url for button in buttons] == [LISTING.url, None]
-    assert buttons[1].callback_data == MenuCallback(action=MenuAction.MAIN).pack()
+    assert buttons[0].url == LISTING.url
+    assert buttons[1].web_app is not None and buttons[1].web_app.url == WEBAPP_URL
+
+
+def test_without_configured_app_only_the_listing_link_is_offered() -> None:
+    buttons = [b for row in listing_keyboard(LISTING.url, None).inline_keyboard for b in row]
+
+    assert len(buttons) == 1, "кнопку web_app нельзя создать без https-адреса приложения"
 
 
 def test_listing_text_has_no_duplicate_link() -> None:

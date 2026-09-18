@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import DeliveryModel, ListingModel
-from app.domain.entities import PendingDelivery
+from app.domain.entities import FoundListing, PendingDelivery
 from app.repositories.listings import to_entity as listing_to_entity
 
 
@@ -56,6 +56,30 @@ class SqlAlchemyDeliveryRepository:
                 listing_id=delivery.listing_id,
                 listing=listing_to_entity(listing),
                 attempts=delivery.attempts,
+            )
+            for delivery, listing in rows.tuples()
+        ]
+
+    async def history(
+        self, filter_id: int, *, limit: int = 50, offset: int = 0
+    ) -> Sequence[FoundListing]:
+        """Что этот фильтр уже находил — для раздела «История» в Mini App."""
+        rows = await self._session.execute(
+            select(DeliveryModel, ListingModel)
+            .join(ListingModel, ListingModel.id == DeliveryModel.listing_id)
+            .where(DeliveryModel.filter_id == filter_id)
+            .order_by(
+                ListingModel.published_at.desc().nulls_last(),
+                DeliveryModel.created_at.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        return [
+            FoundListing(
+                listing=listing_to_entity(listing),
+                found_at=delivery.created_at,
+                sent_at=delivery.sent_at,
             )
             for delivery, listing in rows.tuples()
         ]
