@@ -1,113 +1,115 @@
 # OmniRadarOLX
 
-Telegram-бот для мониторинга объявлений. Сейчас поддерживает OLX.ua; архитектура рассчитана на добавление
-других площадок (например, Gumtree Australia) без изменения ядра.
+*[Версия на русском](README.ru.md)*
 
-**Стек:** Python 3.12 · aiogram 3 · curl_cffi · PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic ·
-Redis (состояние диалогов) · pydantic-settings · Docker Compose.
+A Telegram bot that watches marketplace listings and pushes new ones to you. OLX.ua is supported today;
+the architecture is built so that another marketplace (Gumtree Australia, for example) can be added
+without touching the core.
 
-## Быстрый старт (Docker)
+**Stack:** Python 3.12 · aiogram 3 · curl_cffi · PostgreSQL · SQLAlchemy 2.0 (async) + asyncpg · Alembic ·
+Redis (dialog state) · pydantic-settings · Docker Compose.
+
+## Quick start (Docker)
 
 ```bash
-cp .env.example .env         # впишите BOT__TOKEN и пароль БД
+cp .env.example .env         # fill in BOT__TOKEN and the database password
 docker compose up -d --build # db + redis → migrate (alembic upgrade head) → bot
 docker compose logs -f bot
 ```
 
-В Telegram откройте бота и нажмите «Начать» → «➕ Новый фильтр». Дальше всё управление —
-инлайн-кнопками: команды вводить не нужно, а под каждым присланным объявлением есть
-«🔗 Открыть объявление» и «🏠 Меню».
+Open the bot in Telegram and press "Start" → "➕ New filter". Everything else is inline buttons:
+no commands to type, and every listing the bot sends carries "🔗 Open listing" and "🏠 Menu".
 
-## Локальная разработка
+## Local development
 
 ```bash
 python -m venv .venv && .venv/Scripts/activate   # Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
-docker compose up -d db                          # только PostgreSQL, порт из DB__PORT на 127.0.0.1
+docker compose up -d db                          # PostgreSQL only, bound to 127.0.0.1:DB__PORT
 alembic upgrade head
 python -m app.main
 ```
 
-Проверки:
+Checks:
 
 ```bash
-pytest            # юнит-тесты парсера + интеграционные тесты на PostgreSQL (БД <name>_test)
-pytest -m live    # smoke-тест по реальному API OLX: проверить, не изменился ли формат ответа
+pytest            # parser unit tests + integration tests against PostgreSQL (database <name>_test)
+pytest -m live    # smoke test against the real OLX API: did the response format change?
 ruff check app tests
 mypy app tests    # strict
 ```
 
-## Архитектура
+## Architecture
 
 ```
 app/
-├── main.py                 # корень композиции: создаёт и связывает зависимости (DI), запускает бота и воркер
+├── main.py                 # composition root: builds and wires dependencies, starts bot and worker
 ├── config.py               # pydantic-settings: BOT__*, DB__*, HTTP__*, PARSER__*, MONITORING__*
-├── domain/                 # чистые dataclass-сущности и доменные ошибки, без фреймворков
-├── handlers/               # Presentation: aiogram-роутеры, FSM, клавиатуры. Только вызовы сервисов
-├── services/               # Бизнес-логика
-│   ├── interfaces.py       #   порты: UnitOfWork, репозитории, Notifier (Protocol)
-│   ├── subscriptions.py    #   сценарии пользователя: фильтры, лимиты, права
-│   ├── monitoring.py       #   цикл: поиск → сохранение → дедупликация → доставка
-│   └── parsers/            #   контракт MarketplaceParser, реестр, HTTP-клиент curl_cffi, OLX.ua
-├── repositories/           # Data Access: SQLAlchemy-реализации портов + Unit of Work
-├── database/               # ORM-модели (JSONB), engine/session, миграции Alembic
-├── notifications/          # TelegramNotifier — реализация порта Notifier (клавиатуры берёт
-│                           #   из handlers/keyboards: это тот же телеграм-слой представления)
-└── workers/                # фоновый цикл мониторинга с graceful degradation
+├── domain/                 # plain dataclass entities and domain errors, no frameworks
+├── handlers/               # Presentation: aiogram routers, FSM, keyboards. Service calls only
+├── services/               # Business logic
+│   ├── interfaces.py       #   ports: UnitOfWork, repositories, Notifier (Protocol)
+│   ├── subscriptions.py    #   user scenarios: filters, limits, ownership
+│   ├── monitoring.py       #   the cycle: search → store → deduplicate → deliver
+│   └── parsers/            #   MarketplaceParser contract, registry, curl_cffi HTTP client, OLX.ua
+├── repositories/           # Data access: SQLAlchemy implementations of the ports + Unit of Work
+├── database/               # ORM models (JSONB), engine/session, Alembic migrations
+├── notifications/          # TelegramNotifier — implements the Notifier port (keyboards come from
+│                           #   handlers/keyboards: the same Telegram presentation layer)
+└── workers/                # background monitoring loop with graceful degradation
 ```
 
-Зависимости направлены внутрь: `handlers → services → domain`. `repositories` и `notifications` реализуют
-порты из `services/interfaces.py`, а связывает всё `main.py`. Глобальных синглтонов нет: сервисы
-передаются в хендлеры через DI aiogram (`Dispatcher(subscription_service=...)`).
+Dependencies point inward: `handlers → services → domain`. `repositories` and `notifications` implement
+the ports declared in `services/interfaces.py`, and `main.py` wires everything together. There are no
+global singletons: services reach handlers through aiogram's DI (`Dispatcher(subscription_service=...)`).
 
-### Данные
+### Data
 
-| Таблица | Назначение |
+| Table | Purpose |
 |---|---|
-| `users` | пользователи Telegram (id = Telegram user id) |
-| `subscriptions` | фильтры; параметры поиска в `criteria JSONB` |
-| `listings` | объявления, `UNIQUE (marketplace, external_id)`; характеристики в `attributes JSONB` + GIN-индекс |
-| `deliveries` | связь «фильтр — объявление», `PRIMARY KEY (subscription_id, listing_id)` |
+| `users` | Telegram users (id = Telegram user id) |
+| `subscriptions` | filters; search parameters live in `criteria JSONB` |
+| `listings` | listings, `UNIQUE (marketplace, external_id)`; attributes in `attributes JSONB` + GIN index |
+| `deliveries` | the filter-to-listing link, `PRIMARY KEY (subscription_id, listing_id)` |
 
-**Защита от дублей** работает на уровне БД: `INSERT ... ON CONFLICT DO NOTHING` в `deliveries`.
-Одно объявление по одному фильтру физически не может быть поставлено в очередь дважды.
-Отметка `sent_at` фиксируется после каждого отправленного сообщения, поэтому перезапуск бота не приводит к повторам.
+**Duplicate protection** is enforced by the database: `INSERT ... ON CONFLICT DO NOTHING` into
+`deliveries`. A listing physically cannot be queued twice for the same filter. `sent_at` is committed
+after every message that goes out, so restarting the bot never re-sends anything.
 
-**Что считается «новым».** OLX сортирует выдачу по времени *обновления*, и старые объявления, которые
-продавец «поднял», оказываются наверху. Поэтому объявление отправляется, только если оно создано не раньше,
-чем был создан фильтр (с запасом `MONITORING__PUBLISH_GRACE_MINUTES`). Остальные запоминаются как
-«виденные» (`sent_at` заполняется без отправки).
+**What counts as "new".** OLX sorts results by *update* time, so an old listing the seller bumped shows
+up at the top. A listing is therefore only sent if it was created no earlier than the filter itself
+(with a `MONITORING__PUBLISH_GRACE_MINUTES` margin). The rest are recorded as "seen" — `sent_at` is
+filled in without sending anything.
 
-**Глубина обхода.** По популярному запросу за один интервал может обновиться больше объявлений, чем
-помещается на странице выдачи. Поэтому парсер листает страницы, пока не дойдёт до объявлений старше
-границы `since` (последняя проверка фильтра минус grace), но не больше `PARSER__MAX_PAGES`.
-Если группа фильтров обслуживается одним запросом, граница берётся по самому отстающему из них.
-Новый фильтр границы не задаёт — ему достаточно первой страницы, история всё равно не отправляется.
-Упор в лимит страниц виден в логах как предупреждение: это сигнал уменьшить
-`MONITORING__INTERVAL_SECONDS`.
+**How deep the crawl goes.** A popular query can produce more updates in one interval than fit on a
+single page of results. The parser therefore pages through the feed until it reaches listings older than
+the `since` boundary (the filter's last check minus the grace window), and never beyond
+`PARSER__MAX_PAGES`. When one request serves a group of identical filters, the boundary is taken from
+the one that lags furthest behind. A brand-new filter sets no boundary — one page is enough for it,
+since history is not delivered anyway. Hitting the page limit is logged as a warning: that is the signal
+to lower `MONITORING__INTERVAL_SECONDS`.
 
-### Устойчивость
+### Resilience
 
-- **HTTP** (`services/parsers/http_client.py`): TLS-отпечаток Chrome через curl_cffi, тайм-ауты,
-  повторы с экспоненциальной задержкой и джиттером, учёт `Retry-After`, пересоздание сессии после
-  403 или HTML вместо JSON (признак капчи), минимальный интервал между запросами, прокси через `HTTP__PROXY`.
-- **Мониторинг:** ошибка одного парсера или фильтра не прерывает цикл; одинаковые запросы разных
-  пользователей выполняются один раз; временные ошибки Telegram повторяются до
-  `MONITORING__MAX_DELIVERY_ATTEMPTS` раз; если пользователь заблокировал бота, его фильтры отключаются.
-- **Воркер:** если падает весь цикл (например, недоступна БД), ошибка логируется, а следующая
-  попытка откладывается с растущей паузой. Процесс не завершается.
-- **БД:** `pool_pre_ping` — соединения восстанавливаются после перезапуска PostgreSQL.
-- **Диалоги:** состояние FSM хранится в Redis (`BOT__FSM_STORAGE=redis`, в Docker Compose включено
-  по умолчанию), поэтому незаконченное создание фильтра переживает перезапуск бота. Локально без
-  Redis работает `memory`.
-- **Смена формата API:** если в ответе площадки есть объявления, но не разобралось ни одного, парсер
-  поднимает `ParserResponseError` вместо пустой выдачи — бот не «замолкает» тихо. Актуальность
-  разбора проверяется живым тестом `pytest -m live`.
+- **HTTP** (`services/parsers/http_client.py`): Chrome TLS fingerprint via curl_cffi, timeouts, retries
+  with exponential backoff and jitter, `Retry-After` support, a fresh session after a 403 or after HTML
+  arrives instead of JSON (a captcha tell), a minimum interval between requests, and proxy support
+  through `HTTP__PROXY`.
+- **Monitoring:** one failing parser or filter does not break the cycle; identical queries from
+  different users are executed once; transient Telegram errors are retried up to
+  `MONITORING__MAX_DELIVERY_ATTEMPTS` times; if a user blocks the bot, their filters are switched off.
+- **Worker:** if the whole cycle fails (an unreachable database, say), the error is logged and the next
+  attempt is delayed with a growing pause. The process stays alive.
+- **Database:** `pool_pre_ping` — connections recover after PostgreSQL restarts.
+- **Dialogs:** FSM state is kept in Redis (`BOT__FSM_STORAGE=redis`, enabled by default in Docker
+  Compose), so a half-finished filter survives a bot restart. Locally, without Redis, `memory` works.
+- **API format changes:** if a marketplace response contains listings but none of them parse, the parser
+  raises `ParserResponseError` instead of returning an empty result — the bot does not go quiet in
+  silence. Whether the parsing is still current is checked by the live test, `pytest -m live`.
 
-## Как добавить площадку
+## Adding a marketplace
 
-1. Создайте `app/services/parsers/gumtree_au.py`:
+1. Create `app/services/parsers/gumtree_au.py`:
 
    ```python
    class GumtreeAuParser(MarketplaceParser):
@@ -117,7 +119,9 @@ app/
        def __init__(self, http: HttpClient) -> None:
            self._http = http
 
-       async def search(self, criteria: SearchCriteria) -> Sequence[Listing]:
+       async def search(
+           self, criteria: SearchCriteria, *, since: datetime | None = None
+       ) -> Sequence[Listing]:
            payload = await self._http.get_json(API_URL, params={...})
            return [Listing(marketplace=self.code, external_id=..., url=..., title=..., ...)]
 
@@ -125,20 +129,21 @@ app/
            await self._http.aclose()
    ```
 
-2. Зарегистрируйте фабрику в `PARSER_FACTORIES` в `app/main.py`.
-3. Добавьте код в `.env`: `ENABLED_MARKETPLACES=["olx_ua","gumtree_au"]`.
+2. Register the factory in `PARSER_FACTORIES` in `app/main.py`.
+3. Add the code to `.env`: `ENABLED_MARKETPLACES=["olx_ua","gumtree_au"]`.
 
-Сервисы, БД, миграции и хендлеры менять не нужно: если площадок больше одной, в FSM автоматически
-появляется шаг выбора площадки. Специфичные параметры поиска (город, категория) передаются
-через `SearchCriteria.extra` и сохраняются в JSONB.
+Services, database, migrations and handlers stay untouched: as soon as there is more than one
+marketplace, the FSM grows a marketplace-picking step on its own. Marketplace-specific search
+parameters (city, category) travel in `SearchCriteria.extra` and are stored as JSONB.
 
-## Известные ограничения и точки роста
+## Known limitations and room to grow
 
-- Глубина обхода ограничена `PARSER__MAX_PAGES` (по умолчанию 5 страниц = 200 объявлений за проход).
-  Для запроса, по которому за интервал появляется больше, нужен более короткий
-  `MONITORING__INTERVAL_SECONDS` — предупреждение об упоре в лимит пишется в лог.
-- API OLX (`/api/v1/offers/`) не документирован. Разбор изолирован в `parse_offers`, покрыт тестами
-  на фикстуре, живой формат проверяется `pytest -m live`, а полная неразбираемость ответа — ошибка,
-  а не пустая выдача. Но изменение семантики отдельного поля тестами не ловится.
-- Один экземпляр бота: Redis-хранилище FSM к нескольким репликам готово, но воркер мониторинга
-  не разделяет фильтры между процессами — при нескольких репликах объявления будут искаться дважды.
+- Crawl depth is capped by `PARSER__MAX_PAGES` (5 pages = 200 listings per pass by default). A query
+  that produces more than that within one interval needs a shorter `MONITORING__INTERVAL_SECONDS` —
+  hitting the cap is written to the log as a warning.
+- The OLX API (`/api/v1/offers/`) is undocumented. Parsing is isolated in `parse_offers`, covered by
+  fixture-based tests, checked against the live format by `pytest -m live`, and a wholly unparsable
+  response is an error rather than an empty result. A change in the meaning of a single field, however,
+  is not something the tests can catch.
+- Single instance: the Redis FSM storage is ready for several replicas, but the monitoring worker does
+  not split filters across processes — with more than one replica the same searches would run twice.
