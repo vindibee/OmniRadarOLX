@@ -17,10 +17,12 @@ from app.domain.entities import (
     Filter,
     FoundListing,
     Listing,
+    Overview,
     PendingDelivery,
     SearchCriteria,
     Subscription,
     User,
+    UserSummary,
 )
 from app.domain.tariffs import Tariff
 
@@ -111,6 +113,14 @@ class DeliveryRepository(Protocol):
         ...
 
 
+class StatsRepository(Protocol):
+    """Сводные запросы для админки владельца."""
+
+    async def overview(self, now: datetime) -> Overview: ...
+
+    async def users(self, now: datetime, *, limit: int = 100) -> Sequence[UserSummary]: ...
+
+
 class UnitOfWork(Protocol):
     """Единица работы: одна транзакция и доступ ко всем репозиториям."""
 
@@ -128,6 +138,9 @@ class UnitOfWork(Protocol):
 
     @property
     def deliveries(self) -> DeliveryRepository: ...
+
+    @property
+    def stats(self) -> StatsRepository: ...
 
     async def __aenter__(self) -> Self: ...
 

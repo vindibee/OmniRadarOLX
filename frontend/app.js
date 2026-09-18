@@ -24,7 +24,7 @@ function showScreen(name) {
 
 function showTab(tab) {
   state.tab = tab;
-  ["subscription", "search", "filters", "history"].forEach((name) => {
+  ["subscription", "search", "filters", "history", "admin"].forEach((name) => {
     $(`#tab-${name}`).classList.toggle("hidden", name !== tab);
   });
   document.querySelectorAll("nav [data-tab]").forEach((button) => {
@@ -118,6 +118,14 @@ function renderOnboarding() {
 function renderAccess() {
   const { access } = state.me;
   const card = $("#access-card");
+  if (access.is_admin) {
+    card.innerHTML = `
+      <div class="flex items-center gap-3">
+        <span class="text-2xl">🛠</span>
+        <div class="font-semibold">${i18n.t("admin.unlimited")}</div>
+      </div>`;
+    return;
+  }
   const title = access.is_trial
     ? i18n.t("access.trial")
     : access.is_allowed
@@ -154,6 +162,8 @@ function renderAccess() {
 function renderTariffs() {
   const list = $("#tariff-list");
   list.innerHTML = "";
+  // Владельцу прайс не нужен — у него доступ и так бессрочный.
+  if (state.me.access.is_admin) return;
   state.me.offers.forEach((offer) => {
     const card = document.createElement("div");
     card.className = "rounded-2xl bg-card p-4";
@@ -339,6 +349,75 @@ async function openHistory(filter) {
   });
 }
 
+// ---------- Админка (только у владельца) ----------
+
+const ADMIN_METRICS = [
+  "users",
+  "activeUsers",
+  "filters",
+  "activeFilters",
+  "listings",
+  "deliveries",
+  "sentLastDay",
+  "payingUsers",
+];
+
+const SNAKE = {
+  users: "users",
+  activeUsers: "active_users",
+  filters: "filters",
+  activeFilters: "active_filters",
+  listings: "listings",
+  deliveries: "deliveries",
+  sentLastDay: "sent_last_day",
+  payingUsers: "paying_users",
+};
+
+async function renderAdmin() {
+  const [overview, users] = await Promise.all([api.adminOverview(), api.adminUsers()]);
+
+  const metrics = $("#admin-overview");
+  metrics.innerHTML = "";
+  ADMIN_METRICS.forEach((key) => {
+    const tile = document.createElement("div");
+    tile.className = "rounded-2xl bg-card p-4";
+    tile.innerHTML = `
+      <div class="text-2xl font-semibold">${overview[SNAKE[key]]}</div>
+      <div class="text-xs text-muted">${i18n.t(`admin.metric.${key}`)}</div>`;
+    metrics.append(tile);
+  });
+
+  const list = $("#admin-users");
+  list.innerHTML = "";
+  users.forEach((user) => {
+    const card = document.createElement("div");
+    card.className = "rounded-2xl bg-card p-4";
+    const name = user.username ? `@${user.username}` : user.full_name;
+    const until = user.access_until
+      ? `${i18n.t("access.until")} ${formatDateTime(user.access_until)}`
+      : i18n.t("admin.noAccess");
+    card.innerHTML = `
+      <div class="flex items-baseline justify-between gap-2">
+        <div class="truncate font-medium">${name}</div>
+        <div class="shrink-0 text-xs text-muted">id ${user.id}</div>
+      </div>
+      <div class="mt-1 text-sm text-muted">
+        ${i18n.t("nav.filters")}: ${user.filters} · ${until}
+      </div>`;
+
+    const grant = document.createElement("button");
+    grant.className = "tap mt-3 w-full rounded-xl bg-bg px-3 py-2 text-sm";
+    grant.textContent = i18n.t("admin.grant");
+    grant.onclick = async () => {
+      const result = await api.adminGrant(user.id, 30);
+      toast(i18n.t("admin.granted", { until: formatDateTime(result.until) }));
+      await renderAdmin();
+    };
+    card.append(grant);
+    list.append(card);
+  });
+}
+
 // ---------- Запуск ----------
 
 async function refreshMe() {
@@ -348,9 +427,16 @@ async function refreshMe() {
 }
 
 async function openMain() {
+  const isAdmin = state.me.access.is_admin;
+  // Вкладка админки существует только у владельца: у остальных её нет в разметке.
+  document.querySelector('[data-tab="admin"]').classList.toggle("hidden", !isAdmin);
+  $("#tabbar").classList.toggle("grid-cols-3", !isAdmin);
+  $("#tabbar").classList.toggle("grid-cols-4", isAdmin);
+
   renderAccess();
   renderTariffs();
   await loadFilters();
+  if (isAdmin) await renderAdmin();
   showTab(state.tab);
   showScreen("main");
 }

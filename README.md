@@ -187,6 +187,18 @@ The official `aiocryptopay` wrapper could not be used: it pins `certifi<2024` an
 which conflicts with curl_cffi and aiogram 3.15+. Crypto Pay API is a handful of POST requests, so
 the client is written directly on aiohttp (`app/payments/cryptobot.py`).
 
+### Owner's admin panel
+
+`ADMIN_IDS` lists the owners' Telegram ids. They get unlimited access (no subscription to buy), the
+filter quota does not apply to them, and the Mini App grows an "Admin" tab: a service overview
+(users, filters, listings, deliveries in the last day, paying users) and a user list with a button
+to grant access by hand for N days.
+
+Rights come from the Telegram id inside the signed `initData`, so they cannot be forged: `/api/admin/*`
+answers 403 to everyone else and 401 without a signature. A manual grant extends access from the end
+of the current period — exactly like a payment — and is recorded in `subscriptions` with
+`tariff = grant` and `payment_provider = admin`.
+
 ### Search cache (Redis)
 
 `CachingParser` wraps any parser and takes its place in the registry — neither monitoring nor the

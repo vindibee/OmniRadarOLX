@@ -133,4 +133,7 @@ class Settings(BaseSettings):
     api: ApiSettings = ApiSettings()
     monitoring: MonitoringSettings = MonitoringSettings()
     enabled_marketplaces: list[str] = ["olx_ua"]
+    # Telegram id владельцев: без подписки, без лимитов, с доступом к разделу «Админка».
+    # Личность берётся из подписанной initData, поэтому подделать её нельзя.
+    admin_ids: list[int] = []
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

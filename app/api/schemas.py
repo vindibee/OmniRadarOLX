@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.domain.entities import Access, Filter, FoundListing, SearchCriteria
+from app.domain.entities import Access, Filter, FoundListing, Overview, SearchCriteria, UserSummary
 from app.domain.tariffs import Tariff
 from app.services.billing import Offer
 
@@ -109,6 +110,7 @@ class AccessOut(BaseModel):
     tariff: Tariff | None
     is_trial: bool
     trial_available: bool
+    is_admin: bool
 
     @classmethod
     def from_domain(cls, access: Access) -> AccessOut:
@@ -118,6 +120,7 @@ class AccessOut(BaseModel):
             tariff=access.tariff,
             is_trial=access.is_trial,
             trial_available=access.trial_available,
+            is_admin=access.is_admin,
         )
 
 
@@ -157,6 +160,51 @@ class MeOut(BaseModel):
     marketplaces: list[MarketplaceOut]
     offers: list[OfferOut]
     payment_methods: list[Literal["stars", "cryptobot"]]
+
+
+class OverviewOut(BaseModel):
+    users: int
+    active_users: int
+    filters: int
+    active_filters: int
+    listings: int
+    deliveries: int
+    sent_last_day: int
+    paying_users: int
+
+    @classmethod
+    def from_domain(cls, overview: Overview) -> OverviewOut:
+        # Overview — slots-dataclass, поэтому vars() не подходит.
+        return cls(**asdict(overview))
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str | None
+    full_name: str
+    language_code: str | None
+    is_active: bool
+    filters: int
+    access_until: datetime | None
+    created_at: datetime
+
+    @classmethod
+    def from_domain(cls, summary: UserSummary) -> AdminUserOut:
+        return cls(
+            id=summary.user.id,
+            username=summary.user.username,
+            full_name=summary.user.full_name,
+            language_code=summary.user.language_code,
+            is_active=summary.user.is_active,
+            filters=summary.filters,
+            access_until=summary.access_until,
+            created_at=summary.created_at,
+        )
+
+
+class GrantIn(BaseModel):
+    user_id: int
+    days: int = Field(default=30, ge=1, le=3650)
 
 
 class InvoiceOut(BaseModel):

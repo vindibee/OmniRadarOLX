@@ -174,8 +174,17 @@
         <div id="history-list" class="mt-4 space-y-3"></div>
       </section>
 
+      <!-- Админка: видна только владельцу -->
+      <section id="tab-admin" class="hidden px-5 py-6">
+        <h2 class="text-lg font-semibold" data-i18n="admin.title"></h2>
+        <div id="admin-overview" class="mt-4 grid grid-cols-2 gap-3"></div>
+        <h3 class="mt-7 text-base font-semibold" data-i18n="admin.users"></h3>
+        <div id="admin-users" class="mt-3 space-y-3"></div>
+      </section>
+
       <!-- Нижняя навигация -->
       <nav
+        id="tabbar"
         class="fixed inset-x-0 bottom-0 grid grid-cols-3 border-t border-black/5 bg-bg pb-[env(safe-area-inset-bottom)] text-center text-xs"
       >
         <button data-tab="subscription" class="tap py-3">
@@ -189,6 +198,10 @@
         <button data-tab="filters" class="tap py-3">
           <div class="text-lg">📋</div>
           <span data-i18n="nav.filters"></span>
+        </button>
+        <button data-tab="admin" class="tap hidden py-3">
+          <div class="text-lg">🛠</div>
+          <span data-i18n="nav.admin"></span>
         </button>
       </nav>
     </main>

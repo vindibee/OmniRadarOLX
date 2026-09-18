@@ -9,10 +9,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal
+from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
 
@@ -22,6 +23,8 @@ from app.domain.tariffs import PLANS, Tariff, TariffPlan, plan
 from app.services.interfaces import UnitOfWorkFactory
 
 logger = logging.getLogger(__name__)
+
+ADMIN_PROVIDER = "admin"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,14 +52,22 @@ class BillingService:
         uow_factory: UnitOfWorkFactory,
         options: BillingOptions,
         *,
+        admin_ids: Iterable[int] = (),
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._uow_factory = uow_factory
         self._options = options
+        self._admin_ids = frozenset(admin_ids)
         self._clock = clock
+
+    def is_admin(self, user_id: int) -> bool:
+        return user_id in self._admin_ids
 
     async def access(self, user_id: int) -> Access:
         """Единственный источник правды о доступе — и для бота, и для Mini App."""
+        if self.is_admin(user_id):
+            # Владелец сервиса не покупает у самого себя: доступ бессрочный.
+            return Access(is_allowed=True, is_admin=True, trial_available=False)
         now = self._clock()
         async with self._uow_factory() as uow:
             current = await uow.subscriptions.latest_active(user_id, now)
@@ -128,6 +139,25 @@ class BillingService:
                 currency=currency,
             )
             await uow.commit()
+        return subscription
+
+    async def grant(self, user_id: int, days: int, *, by_admin_id: int) -> Subscription:
+        """Ручная выдача доступа из админки — например, за отзыв или в качестве компенсации."""
+        now = self._clock()
+        async with self._uow_factory() as uow:
+            last_ends_at = await uow.subscriptions.last_ends_at(user_id)
+            starts_at = max(now, last_ends_at) if last_ends_at else now
+            subscription = await uow.subscriptions.add(
+                user_id=user_id,
+                tariff=Tariff.GRANT,
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(days=days),
+                payment_provider=ADMIN_PROVIDER,
+                # Уникален на каждую выдачу: уникальный индекс по платежу не должен мешать.
+                payment_id=f"{by_admin_id}:{uuid4().hex}",
+            )
+            await uow.commit()
+        logger.info("Админ %d выдал пользователю %d %d дн.", by_admin_id, user_id, days)
         return subscription
 
     def offer(self, tariff: Tariff) -> Offer:

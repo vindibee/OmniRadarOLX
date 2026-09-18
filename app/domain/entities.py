@@ -103,6 +103,32 @@ class Access:
     tariff: Tariff | None = None
     is_trial: bool = False
     trial_available: bool = True
+    # Владелец сервиса: доступ бессрочный, лимиты не применяются.
+    is_admin: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Overview:
+    """Сводка для админки: сколько всего и что происходило за сутки."""
+
+    users: int
+    active_users: int
+    filters: int
+    active_filters: int
+    listings: int
+    deliveries: int
+    sent_last_day: int
+    paying_users: int
+
+
+@dataclass(frozen=True, slots=True)
+class UserSummary:
+    """Строка списка пользователей в админке."""
+
+    user: User
+    filters: int
+    access_until: datetime | None
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

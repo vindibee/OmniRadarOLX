@@ -20,6 +20,7 @@ from app.database.session import create_engine, create_session_factory
 from app.payments.cryptobot import CryptoBotPayments
 from app.payments.stars import StarsPayments
 from app.repositories import SqlAlchemyUnitOfWork
+from app.services.admin import AdminService
 from app.services.billing import BillingOptions, BillingService
 from app.services.filters import FilterService
 from app.services.interfaces import Cache, UnitOfWork, UnitOfWorkFactory
@@ -102,7 +103,10 @@ def build_filter_service(
     settings: Settings, uow_factory: UnitOfWorkFactory, parsers: ParserRegistry
 ) -> FilterService:
     return FilterService(
-        uow_factory, parsers, max_filters_per_user=settings.monitoring.max_filters_per_user
+        uow_factory,
+        parsers,
+        max_filters_per_user=settings.monitoring.max_filters_per_user,
+        admin_ids=settings.admin_ids,
     )
 
 
@@ -113,7 +117,12 @@ def build_billing_service(settings: Settings, uow_factory: UnitOfWorkFactory) ->
             day_price_stars=settings.billing.day_price_stars,
             day_price_usd=settings.billing.day_price_usd,
         ),
+        admin_ids=settings.admin_ids,
     )
+
+
+def build_admin_service(uow_factory: UnitOfWorkFactory, billing: BillingService) -> AdminService:
+    return AdminService(uow_factory, billing)
 
 
 def build_bot(settings: Settings) -> Bot:

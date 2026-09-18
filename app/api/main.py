@@ -18,20 +18,33 @@ from fastapi import APIRouter, FastAPI, Header, HTTPException, Query, Request, R
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.deps import AppSettings, Billing, CryptoBot, CurrentUser, Filters, Stars
+from app.api.deps import (
+    Admin,
+    AdminUser,
+    AppSettings,
+    Billing,
+    CryptoBot,
+    CurrentUser,
+    Filters,
+    Stars,
+)
 from app.api.schemas import (
     AccessOut,
+    AdminUserOut,
     FilterIn,
     FilterOut,
+    GrantIn,
     InvoiceOut,
     ItemOut,
     LanguageIn,
     MarketplaceOut,
     MeOut,
     OfferOut,
+    OverviewOut,
     TariffIn,
 )
 from app.composition import (
+    build_admin_service,
     build_billing_service,
     build_bot,
     build_cache,
@@ -201,6 +214,26 @@ async def cryptobot_webhook(
     return Response(status_code=status.HTTP_200_OK)
 
 
+# ---------- Админка владельца ----------
+
+
+@router.get("/admin/overview")
+async def admin_overview(user: AdminUser, admin: Admin) -> OverviewOut:
+    return OverviewOut.from_domain(await admin.overview())
+
+
+@router.get("/admin/users")
+async def admin_users(user: AdminUser, admin: Admin) -> list[AdminUserOut]:
+    return [AdminUserOut.from_domain(item) for item in await admin.users()]
+
+
+@router.post("/admin/grant", status_code=status.HTTP_201_CREATED)
+async def admin_grant(user: AdminUser, admin: Admin, body: GrantIn) -> dict[str, str]:
+    """Ручная выдача доступа: продлевает от конца текущего периода, как и оплата."""
+    subscription = await admin.grant(body.user_id, body.days, by_admin_id=user.id)
+    return {"user_id": str(body.user_id), "until": subscription.ends_at.isoformat()}
+
+
 async def _require_access(user_id: int, billing: BillingService) -> None:
     """Мониторинг — платная часть."""
     access = await billing.access(user_id)
@@ -230,6 +263,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.billing = build_billing_service(app_settings, uow_factory)
         app.state.filters = build_filter_service(app_settings, uow_factory, parsers)
         app.state.stars = build_stars_payments(bot)
+        app.state.admin = build_admin_service(uow_factory, app.state.billing)
         app.state.cryptobot = build_cryptobot_payments(app_settings)
         logger.info("Web API запущен, площадки: %s", ", ".join(parsers.codes))
         try:

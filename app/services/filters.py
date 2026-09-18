@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 from app.domain.entities import Filter, FoundListing, MarketplaceInfo, SearchCriteria, User
 from app.domain.errors import FilterLimitExceededError, FilterNotFoundError
@@ -17,10 +17,12 @@ class FilterService:
         parsers: ParserRegistry,
         *,
         max_filters_per_user: int,
+        admin_ids: Iterable[int] = (),
     ) -> None:
         self._uow_factory = uow_factory
         self._parsers = parsers
         self._max_per_user = max_filters_per_user
+        self._admin_ids = frozenset(admin_ids)
 
     def marketplaces(self) -> Sequence[MarketplaceInfo]:
         return self._parsers.marketplaces()
@@ -55,7 +57,8 @@ class FilterService:
         parser.validate_criteria(criteria)  # InvalidCriteriaError
 
         async with self._uow_factory() as uow:
-            if await uow.filters.count_for_user(user_id) >= self._max_per_user:
+            over_limit = await uow.filters.count_for_user(user_id) >= self._max_per_user
+            if over_limit and user_id not in self._admin_ids:
                 raise FilterLimitExceededError(self._max_per_user)
             search_filter = await uow.filters.add(
                 user_id=user_id,

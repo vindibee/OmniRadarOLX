@@ -16,6 +16,8 @@ TRIAL_DURATION = timedelta(days=7)
 
 class Tariff(StrEnum):
     TRIAL = "trial"
+    # Ручная выдача из админки: срок задаётся явно, прайс к нему не применяется.
+    GRANT = "grant"
     DAY = "day"
     WEEK = "week"
     MONTH = "month"
@@ -41,6 +43,7 @@ class TariffPlan:
 
 PLANS: dict[Tariff, TariffPlan] = {
     Tariff.TRIAL: TariffPlan(Tariff.TRIAL, TRIAL_DURATION, Decimal("1.00")),
+    Tariff.GRANT: TariffPlan(Tariff.GRANT, timedelta(days=30), Decimal("1.00")),
     Tariff.DAY: TariffPlan(Tariff.DAY, timedelta(days=1), Decimal("0.00")),
     Tariff.WEEK: TariffPlan(Tariff.WEEK, timedelta(days=7), Decimal("0.00")),
     Tariff.MONTH: TariffPlan(Tariff.MONTH, timedelta(days=30), Decimal("0.10")),

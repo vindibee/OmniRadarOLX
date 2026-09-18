@@ -40,6 +40,11 @@ const api = {
   deleteFilter: (id) => api.request(`/filters/${id}`, { method: "DELETE" }),
   history: (id) => api.request(`/filters/${id}/items`),
 
+  adminOverview: () => api.request("/admin/overview"),
+  adminUsers: () => api.request("/admin/users"),
+  adminGrant: (userId, days = 30) =>
+    api.request("/admin/grant", { method: "POST", body: { user_id: userId, days } }),
+
   starsInvoice: (tariff) => api.request("/payments/stars", { method: "POST", body: { tariff } }),
   cryptoInvoice: (tariff) => api.request("/payments/cryptobot", { method: "POST", body: { tariff } }),
 };

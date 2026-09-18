@@ -16,6 +16,7 @@ from app.api.security import InitDataError, WebAppUser, parse_init_data
 from app.config import Settings
 from app.payments.cryptobot import CryptoBotPayments
 from app.payments.stars import StarsPayments
+from app.services.admin import AdminService
 from app.services.billing import BillingService
 from app.services.filters import FilterService
 
@@ -52,6 +53,11 @@ def get_cryptobot(request: Request) -> CryptoBotPayments:
     return cryptobot
 
 
+def get_admin(request: Request) -> AdminService:
+    admin: AdminService = request.app.state.admin
+    return admin
+
+
 async def get_current_user(
     settings: Annotated[Settings, Depends(get_settings)],
     authorization: Annotated[str | None, Header()] = None,
@@ -80,7 +86,19 @@ async def get_current_user(
         ) from exc
 
 
+async def get_admin_user(
+    user: Annotated[WebAppUser, Depends(get_current_user)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> WebAppUser:
+    """Админка — только для Telegram id из ADMIN_IDS. Личность уже подтверждена подписью."""
+    if user.id not in set(settings.admin_ids):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
+    return user
+
+
 CurrentUser = Annotated[WebAppUser, Depends(get_current_user)]
+AdminUser = Annotated[WebAppUser, Depends(get_admin_user)]
+Admin = Annotated[AdminService, Depends(get_admin)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 Billing = Annotated[BillingService, Depends(get_billing)]
 Filters = Annotated[FilterService, Depends(get_filters)]
