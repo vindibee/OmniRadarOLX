@@ -1,0 +1,64 @@
+name: omniradar
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    DB__HOST: db
+    DB__PORT: 5432
+    # В Docker диалоги создания фильтра переживают перезапуск бота.
+    BOT__FSM_STORAGE: redis
+    BOT__REDIS_URL: redis://redis:6379/0
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${DB__USER:?заполните DB__USER в .env}
+      POSTGRES_PASSWORD: ${DB__PASSWORD:?заполните DB__PASSWORD в .env}
+      POSTGRES_DB: ${DB__NAME:?заполните DB__NAME в .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Только localhost — для миграций и отладки с хоста. Наружу база не открыта.
+      - "127.0.0.1:${DB__PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # appendonly — состояние FSM переживает и перезапуск самого redis.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  bot:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

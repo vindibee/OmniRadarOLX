@@ -1,0 +1,53 @@
+[project]
+name = "omniradar"
+version = "0.1.0"
+description = "Telegram-бот мониторинга объявлений на маркетплейсах (OLX.ua и другие)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "aiogram>=3.13,<4",
+    "alembic>=1.14,<2",
+    "asyncpg>=0.30,<1",
+    "curl_cffi>=0.7,<1",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "redis>=5,<7",
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках — это нормально для бота
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["app/database/migrations/"]
+
+[[tool.mypy.overrides]]
+module = ["curl_cffi.*", "asyncpg.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+# Тесты с пометкой live ходят в реальный API площадки и по умолчанию не запускаются:
+# они нужны, чтобы вручную проверить, не изменился ли недокументированный формат ответа.
+# Запуск: pytest -m live
+addopts = ["-m", "not live"]
+markers = ["live: обращается к реальному API площадки (сеть, нестабильно)"]
