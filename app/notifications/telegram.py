@@ -12,10 +12,11 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from aiogram.types import LinkPreviewOptions
+from aiogram.types import InlineKeyboardMarkup, LinkPreviewOptions
 
 from app.domain.entities import Listing, Subscription
 from app.domain.errors import NotificationError, RecipientUnavailableError
+from app.handlers import keyboards
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +32,15 @@ class TelegramNotifier:
         self, chat_id: int, subscription: Subscription, listing: Listing
     ) -> None:
         text = format_listing(subscription, listing)
+        markup = keyboards.listing_actions(listing.url)
         try:
-            await self._send(chat_id, text, listing.image_url)
+            await self._send(chat_id, text, listing.image_url, markup)
         except TelegramRetryAfter as exc:
             # Flood control: ждём, сколько просит Telegram, и пробуем один раз.
             if exc.retry_after > MAX_RETRY_AFTER_SECONDS:
                 raise NotificationError(f"Flood control: {exc.retry_after} c") from exc
             await asyncio.sleep(exc.retry_after)
-            await self._send_safely(chat_id, text, listing.image_url)
+            await self._send_safely(chat_id, text, listing.image_url, markup)
         except TelegramForbiddenError as exc:
             raise RecipientUnavailableError(str(exc)) from exc
         except TelegramNotFound as exc:
@@ -46,18 +48,24 @@ class TelegramNotifier:
         except (TelegramNetworkError, TelegramServerError, TelegramBadRequest) as exc:
             raise NotificationError(str(exc)) from exc
 
-    async def _send_safely(self, chat_id: int, text: str, image_url: str | None) -> None:
+    async def _send_safely(
+        self, chat_id: int, text: str, image_url: str | None, markup: InlineKeyboardMarkup
+    ) -> None:
         try:
-            await self._send(chat_id, text, image_url)
+            await self._send(chat_id, text, image_url, markup)
         except TelegramForbiddenError as exc:
             raise RecipientUnavailableError(str(exc)) from exc
         except (TelegramNetworkError, TelegramServerError, TelegramBadRequest) as exc:
             raise NotificationError(str(exc)) from exc
 
-    async def _send(self, chat_id: int, text: str, image_url: str | None) -> None:
+    async def _send(
+        self, chat_id: int, text: str, image_url: str | None, markup: InlineKeyboardMarkup
+    ) -> None:
         if image_url and len(text) <= CAPTION_LIMIT:
             try:
-                await self._bot.send_photo(chat_id, photo=image_url, caption=text)
+                await self._bot.send_photo(
+                    chat_id, photo=image_url, caption=text, reply_markup=markup
+                )
                 return
             except TelegramBadRequest as exc:
                 if "chat not found" in exc.message.lower():
@@ -65,7 +73,10 @@ class TelegramNotifier:
                 # Telegram не смог скачать картинку — отправляем без неё.
                 logger.debug("Фото не отправилось (%s), шлю текст", exc.message)
         await self._bot.send_message(
-            chat_id, text, link_preview_options=LinkPreviewOptions(is_disabled=True)
+            chat_id,
+            text,
+            reply_markup=markup,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
 
 
@@ -78,7 +89,7 @@ def format_listing(subscription: Subscription, listing: Listing) -> str:
     if listing.published_at:
         lines.append(f"🕒 {listing.published_at:%d.%m.%Y %H:%M}")
     lines.append(f"🔎 Фильтр: {escape(subscription.title)}")
-    lines.append(f'<a href="{escape(listing.url, quote=True)}">Открыть объявление</a>')
+    # Ссылка есть в кнопке под сообщением, в тексте её дублировать не нужно.
     return "\n".join(lines)
 
 

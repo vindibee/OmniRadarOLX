@@ -14,7 +14,9 @@ docker compose up -d --build # db + redis → migrate (alembic upgrade head) →
 docker compose logs -f bot
 ```
 
-В Telegram отправьте боту `/start` → «➕ Новый фильтр».
+В Telegram откройте бота и нажмите «Начать» → «➕ Новый фильтр». Дальше всё управление —
+инлайн-кнопками: команды вводить не нужно, а под каждым присланным объявлением есть
+«🔗 Открыть объявление» и «🏠 Меню».
 
 ## Локальная разработка
 
@@ -50,7 +52,8 @@ app/
 │   └── parsers/            #   контракт MarketplaceParser, реестр, HTTP-клиент curl_cffi, OLX.ua
 ├── repositories/           # Data Access: SQLAlchemy-реализации портов + Unit of Work
 ├── database/               # ORM-модели (JSONB), engine/session, миграции Alembic
-├── notifications/          # TelegramNotifier — реализация порта Notifier
+├── notifications/          # TelegramNotifier — реализация порта Notifier (клавиатуры берёт
+│                           #   из handlers/keyboards: это тот же телеграм-слой представления)
 └── workers/                # фоновый цикл мониторинга с graceful degradation
 ```
 

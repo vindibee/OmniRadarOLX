@@ -31,6 +31,15 @@ def back_to_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def listing_actions(listing_url: str) -> InlineKeyboardMarkup:
+    """Клавиатура под уведомлением: открыть объявление и вернуться в меню одной кнопкой."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔗 Открыть объявление", url=listing_url)
+    builder.button(text="🏠 Меню", callback_data=MenuCallback(action=MenuAction.MAIN))
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def marketplaces(items: Sequence[MarketplaceInfo]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for item in items:

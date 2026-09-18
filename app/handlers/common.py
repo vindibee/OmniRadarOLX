@@ -1,7 +1,7 @@
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.handlers import keyboards
 from app.handlers.callbacks import MenuAction, MenuCallback
@@ -18,8 +18,24 @@ HELP_TEXT = (
     "1. Нажмите «➕ Новый фильтр», выберите площадку и введите запрос.\n"
     "2. При желании укажите диапазон цен.\n"
     "3. Бот регулярно проверяет площадку и присылает только новые объявления.\n\n"
-    "Команды: /start — меню, /filters — мои фильтры, /cancel — отменить ввод."
+    "Всё управление — кнопками. Команды /start, /filters и /cancel делают то же самое,"
+    " если удобнее с клавиатуры."
 )
+
+
+async def show(callback: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> None:
+    """Показывает экран в ответ на нажатие кнопки.
+
+    Сообщение с фото (уведомление об объявлении) отредактировать как текст нельзя,
+    поэтому для него отправляем новое сообщение — кнопка «🏠 Меню» работает везде.
+    """
+    message = callback.message
+    if not isinstance(message, Message):
+        return
+    if message.text is None:
+        await message.answer(text, reply_markup=markup)
+    else:
+        await message.edit_text(text, reply_markup=markup)
 
 
 @router.message(CommandStart())
@@ -50,18 +66,17 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 @router.callback_query(MenuCallback.filter(F.action == MenuAction.MAIN))
 async def on_main_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    if isinstance(callback.message, Message):
-        await callback.message.edit_text(WELCOME_TEXT, reply_markup=keyboards.main_menu())
+    await show(callback, WELCOME_TEXT, keyboards.main_menu())
     await callback.answer()
 
 
 @router.callback_query(MenuCallback.filter(F.action == MenuAction.HELP))
 async def on_help(callback: CallbackQuery) -> None:
-    if isinstance(callback.message, Message):
-        await callback.message.edit_text(HELP_TEXT, reply_markup=keyboards.back_to_menu())
+    await show(callback, HELP_TEXT, keyboards.back_to_menu())
     await callback.answer()
 
 
 @router.message(StateFilter(None))
 async def fallback(message: Message) -> None:
-    await message.answer("Не понял команду. Откройте меню:", reply_markup=keyboards.main_menu())
+    """Любое сообщение вне сценария — это просьба показать меню, а не ошибка пользователя."""
+    await message.answer(WELCOME_TEXT, reply_markup=keyboards.main_menu())

@@ -7,6 +7,7 @@ from aiogram.filters import ExceptionTypeFilter
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
 from app.domain.errors import DomainError
+from app.handlers import keyboards
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def register_error_handlers(router: Router) -> None:
 
 
 async def _domain_error_in_message(event: ErrorEvent, message: Message) -> None:
-    await message.answer(f"⚠️ {event.exception}")
+    await message.answer(f"⚠️ {event.exception}", reply_markup=keyboards.main_menu())
 
 
 async def _domain_error_in_callback(event: ErrorEvent, callback: CallbackQuery) -> None:
@@ -37,6 +38,8 @@ async def _unexpected_error(event: ErrorEvent) -> None:
         if callback is not None:
             await callback.answer("Что-то пошло не так, попробуйте позже", show_alert=True)
         elif message is not None:
-            await message.answer("Что-то пошло не так, попробуйте позже.")
+            await message.answer(
+                "Что-то пошло не так, попробуйте позже.", reply_markup=keyboards.main_menu()
+            )
     except Exception:  # сеть могла пропасть — не роняем обработку апдейтов
         logger.debug("Не удалось сообщить пользователю об ошибке", exc_info=True)
